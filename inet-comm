@@ -17,6 +17,8 @@
 #include <log-console>
 #include <net/if.h>
 #include <sys/ioctl.h>
+#include <vector>
+#include <ifaddrs.h>
 
 #define log (log_ << l_time << l_location)
 #define err (err_ << l_time << l_location)
@@ -83,7 +85,9 @@ public:
 	
 	static void close_port_in_iptables(uint16_t port);
 	
-	static void get_machine_ip(struct ifreq* result);
+	static void get_machine_ip(struct ifreq& result, const char* interface_name);
+	
+	static std::vector<struct ifaddrs*>& list_all_network_interfaces();
 	
 	[[nodiscard]] int get_socket() const;
 	
@@ -238,23 +242,41 @@ void server::close_port_in_iptables(uint16_t port)
 	}
 }
 
-void server::get_machine_ip(struct ifreq* result)
+void server::get_machine_ip(struct ifreq& result, const char* interface_name)
 {
-	int fd;
+	int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
 	
-	fd = ::socket(AF_INET, SOCK_DGRAM, 0);
-	
-	result = new struct ifreq;
-	
-	result->ifr_ifru.ifru_addr.sa_family = AF_INET;
+	result.ifr_ifru.ifru_addr.sa_family = AF_INET;
 	
 	/*eth0 - define the ifr_name - port name where network attached.*/
-	::memcpy(result->ifr_ifrn.ifrn_name, "eth0", IFNAMSIZ - 1);
+	::memcpy(result.ifr_ifrn.ifrn_name, interface_name, IFNAMSIZ - 1);
 	
 	/*Accessing network interface information by passing address using ioctl.*/
 	::ioctl(fd, SIOCGIFADDR, &result);
 	
 	::close(fd);
+}
+
+std::vector<struct ifaddrs*>& server::list_all_network_interfaces()
+{
+	auto* result = new std::remove_cvref_t<decltype(list_all_network_interfaces())>();
+	
+	struct ifaddrs* ifaddr, * ifa;
+	
+	if (::getifaddrs(&ifaddr) == -1)
+	{
+		log << color::red << "getifaddrs() failed : " << ::strerror(errno) << ".\n" << color::reset;
+		return *result;
+	}
+	
+	/* Walk through linked list, maintaining head pointer so we
+	   can free list later */
+	for (ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next)
+	{
+		if (ifa->ifa_addr == nullptr || ifa->ifa_addr->sa_family != AF_PACKET) continue;
+		result->push_back(ifa);
+	}
+	return *result;
 }
 
 void* server::process_client(void* args)
