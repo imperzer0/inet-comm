@@ -197,7 +197,7 @@ bool server::run() const
 		dat->thread_id = ++threads_count;
 		dat->process_function = process_function;
 		
-		log << color::green << "running client processing thread..." << log_console::l_endl << color::reset;
+		log << color::green << "running client processing thread..." << log_console::l_endl << color::reset << log_console::l_unlock;
 		
 		pthread_t pthread;
 		pthread_create(&pthread, nullptr, process_client, (void*)dat);
@@ -217,7 +217,7 @@ void* server::server_thread(void* args)
 
 void server::run_server_thread()
 {
-	log << color::light << color::yellow << "starting main server thread..." << log_console::l_endl;
+	log << color::light << color::yellow << "starting main server thread..." << log_console::l_endl << log_console::l_unlock;
 	pthread_create(&this->main_thread, nullptr, server_thread, static_cast<void*>(const_cast<server*>(this)));
 	pthread_detach(this->main_thread);
 	log << color::light << color::yellow << "done." << log_console::l_endl << log_console::l_unlock;
@@ -436,7 +436,10 @@ ssize_t client::read(void* data, size_t size, bool non_block) const
 	if (non_block)
 	{
 		flags = fcntl(this->socket, F_GETFL, 0);
-		fcntl(this->socket, F_SETFL, flags | O_NONBLOCK);
+		if (::fcntl(this->socket, F_SETFL, flags | O_NONBLOCK) < 0)
+		{
+			err << color::red << "fcntl() failed : " << color::bold << ::strerror(errno) << color::reset << color::red << "." << log_console::l_endl << color::reset << log_console::l_unlock;
+		}
 	}
 	
 	ssize_t read = ::read(this->socket, data, size);
@@ -447,7 +450,10 @@ ssize_t client::read(void* data, size_t size, bool non_block) const
 	
 	if (non_block)
 	{
-		fcntl(this->socket, F_SETFL, flags);
+		if (::fcntl(this->socket, F_SETFL, flags))
+		{
+			err << color::red << "fcntl() failed : " << color::bold << ::strerror(errno) << color::reset << color::red << "." << log_console::l_endl << color::reset << log_console::l_unlock;
+		}
 	}
 	
 	return read;
