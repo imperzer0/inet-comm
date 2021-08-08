@@ -110,10 +110,16 @@ private:
 	static pthread_mutex_t  mutex;
 };
 
+// #definition-begin suppress_signal
+
 void suppress_signal::_sig_handle(int _sig)
 {
 	error(::strsignal(_sig));
 }
+
+// #definition-end suppress_signal
+
+// #definition-begin server
 
 log_console     server::log_(stdout);
 log_console     server::err_(stderr);
@@ -332,7 +338,7 @@ server::~server()
 	::close(this->socket);
 }
 
-// inet_io
+// #definition-end server
 
 class inet_io
 {
@@ -349,10 +355,18 @@ public:
 	[[nodiscard]] int get_socket() const;
 
 protected:
+	template <typename type>
+	friend inline inet_io& operator<<(inet_io& io, type data);
+	
+	template <typename type>
+	friend inline inet_io& operator>>(inet_io& io, type& data);
+	
 	int                socket;
 	static log_console log_;
 	static log_console err_;
 };
+
+// #definition-begin inet_io
 
 log_console inet_io::log_(stdout);
 log_console inet_io::err_(stderr);
@@ -432,9 +446,45 @@ int inet_io::get_socket() const
 	return socket;
 }
 
-// client
+template <typename type>
+inline inet_io& operator<<(inet_io& io, type data)
+{
+	if constexpr(std::is_same_v<std::remove_cvref_t<type>, const char*>)
+	{
+		io.write(data, strlen(data));
+	}
+	else if constexpr(std::is_same_v<std::remove_cvref_t<type>, std::string>)
+	{
+		io.write(data.c_str(), data.size());
+	}
+	else if constexpr(std::is_arithmetic_v<type>)
+	{
+		io.write(&data, sizeof(data));
+	}
+	else
+	{
+		static_cast<type>(new type); // invalid data type
+	}
+	return io;
+}
 
-class client : inet_io
+template <typename type>
+inline inet_io& operator>>(inet_io& io, type& data)
+{
+	if constexpr(!std::is_const_v<type> && std::is_arithmetic_v<type>)
+	{
+		io.read(&data, sizeof(data));
+	}
+	else
+	{
+		static_cast<type>(new type); // invalid data type
+	}
+	return io;
+}
+
+// #definition-end inet_io
+
+class client : public inet_io
 {
 public:
 	client(const in_addr& server_address, uint16_t port);
@@ -453,6 +503,8 @@ private:
 	static log_console log_;
 	static log_console err_;
 };
+
+// #definition-begin client
 
 log_console client::log_(stdout);
 log_console client::err_(stderr);
@@ -506,5 +558,6 @@ client::~client()
 	::close(this->socket);
 }
 
+// #definition-end client
 
 #endif //KAZKUEME_INET_COMM_HPP
