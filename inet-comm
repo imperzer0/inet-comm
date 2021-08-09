@@ -348,11 +348,13 @@ public:
 	explicit inet_io(int socket);
 	
 	template <size_t max_attempts = 0>
-	bool write(const void* data, size_t size) const;
+	bool write(const void* data, size_t size);
 	
-	ssize_t read(void* data, size_t size, bool non_block = false) const;
+	ssize_t read(void* data, size_t size, bool non_block = false);
 	
 	[[nodiscard]] int get_socket() const;
+	
+	inline operator bool() const;
 
 protected:
 	template <typename type>
@@ -364,6 +366,7 @@ protected:
 	int                socket;
 	static log_console log_;
 	static log_console err_;
+	bool               sucess = true;
 };
 
 // #definition-begin inet_io
@@ -375,8 +378,10 @@ inet_io::inet_io(int socket) : socket(socket)
 { }
 
 template <size_t max_attempts>
-bool inet_io::write(const void* data, size_t size) const
+bool inet_io::write(const void* data, size_t size)
 {
+	this->sucess = true;
+	
 	ssize_t wrote = ::write(this->socket, data, size);
 	if (wrote < 0)
 	{
@@ -406,11 +411,13 @@ bool inet_io::write(const void* data, size_t size) const
 fail:
 	err << color::red << "write() failed : " << color::bold << ::strerror(errno) << color::reset << color::red << "." << color::reset
 		<< log_console::l_endent;
+	this->sucess = false;
 	return false;
 }
 
-ssize_t inet_io::read(void* data, size_t size, bool non_block) const
+ssize_t inet_io::read(void* data, size_t size, bool non_block)
 {
+	this->sucess = true;
 	int flags;
 	if (non_block)
 	{
@@ -419,6 +426,7 @@ ssize_t inet_io::read(void* data, size_t size, bool non_block) const
 		{
 			err << color::red << "fcntl() failed : " << color::bold << ::strerror(errno) << color::reset << color::red << "." << color::reset
 				<< log_console::l_endent;
+			this->sucess = false;
 		}
 	}
 	
@@ -427,6 +435,7 @@ ssize_t inet_io::read(void* data, size_t size, bool non_block) const
 	{
 		err << color::red << "read() failed : " << color::bold << ::strerror(errno) << color::reset << color::red << "." << color::reset
 			<< log_console::l_endent;
+		this->sucess = false;
 	}
 	
 	if (non_block)
@@ -435,6 +444,7 @@ ssize_t inet_io::read(void* data, size_t size, bool non_block) const
 		{
 			err << color::red << "fcntl() failed : " << color::bold << ::strerror(errno) << color::reset << color::red << "." << color::reset
 				<< log_console::l_endent;
+			this->sucess = false;
 		}
 	}
 	
@@ -444,6 +454,11 @@ ssize_t inet_io::read(void* data, size_t size, bool non_block) const
 int inet_io::get_socket() const
 {
 	return socket;
+}
+
+inet_io::operator bool() const
+{
+	return this->sucess;
 }
 
 template <typename type>
