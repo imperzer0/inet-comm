@@ -19,11 +19,12 @@
 #include <sys/ioctl.h>
 #include <vector>
 #include <ifaddrs.h>
+#include <cassert>
 
 #define log log_ << log_console::l_lock << l_time << l_location
 #define err err_ << log_console::l_lock << l_time << l_location
 
-#define error(message) (log << color::red << color::bold << "error" << color::reset << " : " << color::red << color::italic << (message) << log_console::l_endent)
+#define error(message) (log << color::red << color::bold << "error" << color::reset << " : " << color::red << color::italic << message << color::reset << log_console::l_endent)
 #define fatal_error(message) log << color::red << color::bold << "error" << color::reset << " : " << color::red << color::italic << (message) << log_console::l_endent; throw std::runtime_error(message)
 
 class suppress_signal
@@ -38,6 +39,10 @@ public:
 	{
 		::signal(this->_sig, SIG_DFL);
 	}
+	
+	static void enable_log(bool status = true);
+	
+	static void enable_err(bool status = true);
 
 private:
 	int _sig;
@@ -117,6 +122,18 @@ void suppress_signal::_sig_handle(int _sig)
 	error(::strsignal(_sig));
 }
 
+void suppress_signal::enable_log(bool status)
+{
+	if (status) log_ << log_console::on;
+	else log_ << log_console::off;
+}
+
+void suppress_signal::enable_err(bool status)
+{
+	if (status) log_ << log_console::on;
+	else log_ << log_console::off;
+}
+
 // #definition-end suppress_signal
 
 // #definition-begin server
@@ -137,15 +154,14 @@ server::server(int max_clients, const sockaddr_in& address, client_process_funct
 	socket = ::socket(AF_INET, SOCK_STREAM, 0);
 	if (socket < 0)
 	{
-		err << color::red << "socket() failed : " << color::bold << ::strerror(errno) << color::reset << color::red << ". socket : " << socket
-			<< color::reset << log_console::l_endent;
+		error("socket() failed " << errno << " " << color::bold << ::strerror(errno) << color::reset << color::red << ". socket : " << socket);
 		return;
 	}
 	
 	errno = 0;
 	if (int ret = ::setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, (char*)(new int(1)), sizeof(int)); ret < 0)
 	{
-		err << color::red << "setsockopt() failed : " << color::bold << ::strerror(errno) << color::reset << log_console::l_endent;
+		error("setsockopt() failed " << errno << " " << color::bold << ::strerror(errno) << color::reset);
 		return;
 	}
 	
@@ -153,7 +169,7 @@ server::server(int max_clients, const sockaddr_in& address, client_process_funct
 	errno = 0;
 	if (int ret = ::bind(socket, (struct sockaddr*)&address, sizeof(address)); ret < 0)
 	{
-		err << color::red << "bind() failed : " << color::bold << ::strerror(errno) << color::reset << log_console::l_endent;
+		error("bind() failed " << errno << " " << color::bold << ::strerror(errno) << color::reset);
 		return;
 	}
 	
@@ -163,7 +179,7 @@ server::server(int max_clients, const sockaddr_in& address, client_process_funct
 	errno = 0;
 	if (listen(socket, max_clients) < 0)
 	{
-		err << color::red << "listen() failed : " << color::bold << ::strerror(errno) << color::reset << log_console::l_endent;
+		error("listen() failed " << errno << " " << color::bold << ::strerror(errno) << color::reset);
 		return;
 	}
 	log << color::green << "success." << color::reset << log_console::l_endent;
@@ -184,7 +200,7 @@ bool server::run() const
 		errno = 0;
 		if (new_socket = ::accept(this->socket, (struct sockaddr*)&address, &addrlen); new_socket < 0)
 		{
-			err << color::red << "accept() failed : " << color::bold << ::strerror(errno) << color::reset << log_console::l_endent;
+			error("accept() failed " << errno << " " << color::bold << ::strerror(errno) << color::reset);
 			if (errno == EBADF || errno == EINVAL)
 			{
 				return false;
@@ -278,7 +294,7 @@ std::vector<struct ifaddrs*>& server::list_all_network_interfaces()
 	
 	if (::getifaddrs(&ifaddr) == -1)
 	{
-		err << color::red << "getifaddrs() failed : " << ::strerror(errno) << "." << color::reset << log_console::l_endent;
+		error("getifaddrs() failed " << errno << " " << color::bold << ::strerror(errno) << color::reset << ".");
 		return *result;
 	}
 	
@@ -355,6 +371,9 @@ public:
 	[[nodiscard]] int get_socket() const;
 	
 	inline operator bool() const;
+	
+	static log_console log_;
+	static log_console err_;
 
 protected:
 	template <typename type>
@@ -363,10 +382,8 @@ protected:
 	template <typename type>
 	friend inline inet_io& operator>>(inet_io& io, type& data);
 	
-	int                socket;
-	static log_console log_;
-	static log_console err_;
-	bool               sucess = true;
+	int  socket;
+	bool sucess = true;
 };
 
 // #definition-begin inet_io
@@ -409,8 +426,7 @@ bool inet_io::write(const void* data, size_t size)
 	return wrote == size;
 
 fail:
-	err << color::red << "write() failed : " << color::bold << ::strerror(errno) << color::reset << color::red << "." << color::reset
-		<< log_console::l_endent;
+	error("write() failed " << errno << " " << color::bold << ::strerror(errno) << color::reset << color::red << ".");
 	this->sucess = false;
 	return false;
 }
@@ -424,8 +440,7 @@ ssize_t inet_io::read(void* data, size_t size, bool non_block)
 		flags = fcntl(this->socket, F_GETFL, 0);
 		if (::fcntl(this->socket, F_SETFL, flags | O_NONBLOCK) < 0)
 		{
-			err << color::red << "fcntl() failed : " << color::bold << ::strerror(errno) << color::reset << color::red << "." << color::reset
-				<< log_console::l_endent;
+			error("fcntl() failed " << errno << " " << color::bold << ::strerror(errno) << color::reset << color::red << ".");
 			this->sucess = false;
 		}
 	}
@@ -433,8 +448,7 @@ ssize_t inet_io::read(void* data, size_t size, bool non_block)
 	ssize_t read = ::read(this->socket, data, size);
 	if (read <= 0)
 	{
-		err << color::red << "read() failed : " << color::bold << ::strerror(errno) << color::reset << color::red << "." << color::reset
-			<< log_console::l_endent;
+		error("read() failed " << errno << " " << color::bold << ::strerror(errno) << color::reset << color::red << ".");
 		this->sucess = false;
 	}
 	
@@ -442,8 +456,7 @@ ssize_t inet_io::read(void* data, size_t size, bool non_block)
 	{
 		if (::fcntl(this->socket, F_SETFL, flags))
 		{
-			err << color::red << "fcntl() failed : " << color::bold << ::strerror(errno) << color::reset << color::red << "." << color::reset
-				<< log_console::l_endent;
+			error("fcntl() failed " << errno << " " << color::bold << ::strerror(errno) << color::reset << color::red << ".");
 			this->sucess = false;
 		}
 	}
@@ -515,14 +528,9 @@ public:
 private:
 	uint16_t           port;
 	struct sockaddr_in server_address;
-	static log_console log_;
-	static log_console err_;
 };
 
 // #definition-begin client
-
-log_console client::log_(stdout);
-log_console client::err_(stderr);
 
 client::client(const in_addr& server_address, uint16_t port) : server_address{AF_INET, htons(port), server_address}, port(port)
 {
@@ -535,8 +543,7 @@ client::client(const in_addr& server_address, uint16_t port) : server_address{AF
 	this->socket = ::socket(AF_INET, SOCK_STREAM, 0);
 	if (this->socket < 0)
 	{
-		err << color::red << "socket init failed : " << color::bold << ::strerror(errno)
-			<< color::reset << color::red << ". socket : " << socket << color::reset << log_console::l_endent;
+		error("socket init failed " << errno << " " << color::bold << ::strerror(errno) << color::reset << color::red << ". socket : " << socket);
 		return;
 	}
 	
@@ -550,7 +557,7 @@ bool client::connect()
 	errno = 0;
 	if (::connect(socket, (struct sockaddr*)&this->server_address, sizeof(this->server_address)) < 0)
 	{
-		err << color::red << "connection failed : " << color::bold << ::strerror(errno) << color::reset << log_console::l_endent;
+		error("connection failed " << errno << " " << color::bold << ::strerror(errno) << color::reset);
 		return false;
 	}
 	

@@ -1,12 +1,12 @@
 pkgname="inet-comm"
 epoch=1
-pkgver=6
+pkgver=7
 pkgrel=1
 pkgdesc="ipv4 internet tcp socket communication library"
 arch=("x86_64")
 url="https://github.com/imperzer0/inet-comm"
 license=('GPL')
-depends=("log-console>=1.5-1")
+depends=("log-console>=1.8-1")
 makedepends=("cmake>=3.0")
 source=("local://inet-comm")
 md5sums=("SKIP")
