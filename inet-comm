@@ -24,18 +24,33 @@
 #include <log-console>
 #include <ifaddrs.h>
 
+#else
+
+#include <windows.h>
+#include <winsock2.h>
+#pragma comment(lib,"ws2_32.lib")
+
 #endif
 
 #if defined(linux)
+
 #define log log_ << log_console::l_lock << l_time << l_location
 #define err err_ << log_console::l_lock << l_time << l_location
 
 #define error(message) (log << color::red << color::bold << "error" << color::reset << " : " << color::red << color::italic << message << color::reset << log_console::l_endent)
 #define fatal_error(message) error(message); throw std::runtime_error(message)
+
 #else
-#define error(message) (std::cerr << "error" << " : " << message << "\n")
+
+#define log std::cout
+#define err std::cerr
+
+#define error(message) (err << "error" << " : " << message << "\n")
 #define fatal_error(message) error(message); throw std::runtime_error(message)
+
 #endif
+
+#if defined(linux)
 
 class suppress_signal
 {
@@ -49,116 +64,24 @@ public:
 	{
 		::signal(this->_sig, SIG_DFL);
 	}
-
-#if defined(linux)
 	
 	static void enable_log(bool status = true);
 	
 	static void enable_err(bool status = true);
 
-#endif
-
 private:
 	int _sig;
 	
 	static void _sig_handle(int _sig);
-
-#if defined(linux)
+	
 	static log_console log_;
 	static log_console err_;
-#endif
-};
-
-log_console suppress_signal::log_(stdout);
-log_console suppress_signal::err_(stderr);
-
-class server;
-
-typedef bool (* client_process_function)(int socket, const sockaddr_in& address, server* server);
-
-struct server_client_data
-{
-#if defined(linux)
-	int         socket;
-	sockaddr_in address;
-	std::map<int, bool>* is_client_processing_ptr;
-#endif
-	server* serv;
-	client_process_function process_function;
-	int                     thread_id;
-};
-
-class server
-{
-public:
-#if defined(linux)
-	
-	server(int max_clients, const struct sockaddr_in& address, client_process_function process_function, void* extra = nullptr);
-
-#endif
-	
-	[[nodiscard]] bool run() const;
-
-#if defined(linux)
-	
-	static void* server_thread(void* args);
-
-#endif
-	
-	void run_server_thread();
-
-#if defined(linux)
-	
-	static void open_port_in_iptables(uint16_t port);
-	
-	static void close_port_in_iptables(uint16_t port);
-	
-	static void get_machine_ip(struct ifreq& result, const char* interface_name);
-	
-	static std::vector<struct ifaddrs*>& list_all_network_interfaces();
-	
-	[[nodiscard]] int get_socket() const;
-
-#endif
-	
-	[[nodiscard]] int get_max_clients() const;
-
-#if defined(linux)
-	
-	[[nodiscard]] const sockaddr_in& get_address() const;
-
-#endif
-	
-	[[nodiscard]] client_process_function get_process_function() const;
-	
-	~server();
-	
-	void* extra;
-
-#if defined(linux)
-	static log_console log_;
-	static log_console err_;
-#endif
-
-private:
-#if defined(linux)
-	
-	static void* process_client(void* args);
-	
-	pthread_t main_thread;
-	int       socket;
-#endif
-	int max_clients;
-#if defined(linux)
-	struct sockaddr_in address;
-#endif
-	client_process_function process_function;
-#if defined(linux)
-	static pthread_mutex_t mutex;
-#endif
 };
 
 // #definition-begin suppress_signal
+
+log_console suppress_signal::log_(stdout);
+log_console suppress_signal::err_(stderr);
 
 void suppress_signal::_sig_handle(int _sig)
 {
@@ -178,17 +101,114 @@ void suppress_signal::enable_err(bool status)
 }
 
 // #definition-end suppress_signal
+#endif
+
+class server;
+
+typedef bool (* client_process_function)(int socket, const sockaddr_in& address, server* server);
+
+struct server_client_data
+{
+#if defined(linux)
+	int socket;
+	std::map<int, bool>* is_client_processing_ptr;
+#else
+	SOCKET socket;
+	std::map<SOCKET, bool>* is_client_processing_ptr;
+#endif
+	sockaddr_in address;
+	server* serv;
+	client_process_function process_function;
+	int                     thread_id;
+};
+
+class server
+{
+public:
+	server(int max_clients, const struct sockaddr_in& address, client_process_function process_function, void* extra = nullptr);
+	
+	[[nodiscard]] bool run() const;
+
+#if defined(linux)
+	
+	static void* server_thread(void* args);
+
+#else
+	
+	static DWORD WINAPI server_thread(void* args);
+	
+#endif
+	
+	void run_server_thread();
+	
+	static void wait_for_all_servers();
+
+#if defined(linux)
+	
+	static void open_port_in_iptables(uint16_t port);
+	
+	static void close_port_in_iptables(uint16_t port);
+	
+	static void get_machine_ip(struct ifreq& result, const char* interface_name);
+	
+	static std::vector<struct ifaddrs*>& list_all_network_interfaces();
+	
+	[[nodiscard]] int get_socket() const;
+
+#endif
+	
+	[[nodiscard]] int get_max_clients() const;
+	
+	[[nodiscard]] const sockaddr_in& get_address() const;
+	
+	[[nodiscard]] client_process_function get_process_function() const;
+	
+	~server();
+	
+	void* extra;
+
+#if defined(linux)
+	
+	static log_console log_;
+	static log_console err_;
+	
+#endif
+
+private:
+#if defined(linux)
+	
+	static void* process_client(void* args);
+	
+	pthread_t main_thread = 0;
+	int       socket;
+	
+#else
+	
+	static DWORD WINAPI process_client(void* args);
+	
+	SOCKET socket;
+	HANDLE main_thread = nullptr;
+	
+#endif
+	int                     max_clients;
+	struct sockaddr_in      address;
+	client_process_function process_function;
+#if defined(linux)
+	static pthread_mutex_t mutex;
+#endif
+	static int server_threads;
+};
 
 // #definition-begin server
 
+int server::server_threads    = 0;
+
 #if defined(linux)
+
 log_console     server::log_(stdout);
 log_console     server::err_(stderr);
 pthread_mutex_t server::mutex = PTHREAD_MUTEX_INITIALIZER;
-#endif
 
-
-#if defined(linux)
 
 server::server(int max_clients, const sockaddr_in& address, client_process_function process_function, void* extra) :
 		max_clients(max_clients), address(address), process_function(process_function), extra(extra)
@@ -233,24 +253,80 @@ server::server(int max_clients, const sockaddr_in& address, client_process_funct
 	log << color::green << "success." << color::reset << log_console::l_endent;
 }
 
+#else
+
+server::server(int max_clients, const sockaddr_in& address, client_process_function process_function, void* extra) :
+		max_clients(max_clients), address(address), process_function(process_function), extra(extra)
+{
+	log << "winsock lib init...\n";
+
+	WSADATA wsa;
+
+	if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
+	{
+		error("WSAStartup() failed error: " << WSAGetLastError());
+		return;
+	}
+
+	log << "done.\n";
+
+	log << "socket init...\nserver address: " << inet_ntoa(address.sin_addr)
+		<< ";\nsocket family: " << address.sin_family
+		<< ";\nport = " << ntohs(address.sin_port)
+		<< ";\n\tmax connections accept = " << max_clients
+		<< ";\n";
+	errno = 0;
+	socket = ::socket(AF_INET, SOCK_STREAM, 0);
+	if (socket == INVALID_SOCKET)
+	{
+		error("socket() failed " << errno << " " << ::strerror(errno) << ". socket : " << socket);
+		return;
+	}
+	
+	errno = 0;
+	if (int ret = ::setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, (char*)(new int(1)), sizeof(int)); ret < 0)
+	{
+		error("setsockopt() failed " << errno << " " << ::strerror(errno));
+		return;
+	}
+	
+	log << "binding...\n";
+	errno = 0;
+	if (int ret = ::bind(socket, (struct sockaddr*)&address, sizeof(address)); ret < 0)
+	{
+		error("bind() failed " << errno << " " << ::strerror(errno));
+		return;
+	}
+	
+	log << "success.\n"
+		<< "listening socket = " << socket << " ...\n"
+		<< "listen...\n";
+	errno = 0;
+	if (listen(socket, max_clients) < 0)
+	{
+		error("listen() failed " << errno << " " << ::strerror(errno));
+		return;
+	}
+	log << "success.\n";
+}
+
 #endif
+
+#if defined(linux)
 
 bool server::run() const
 {
 	int threads_count          = 0;
-
-#if defined(linux)
+	
 	std::map<int, bool> is_client_processing;
 	
 	struct sockaddr_in address{ };
 	socklen_t          addrlen = sizeof(address);
 	
 	int new_socket;
-#endif
 	
 	while (true)
 	{
-#if defined(linux)
 		errno = 0;
 		if (new_socket = ::accept(this->socket, (struct sockaddr*)&address, &addrlen); new_socket < 0)
 		{
@@ -282,13 +358,63 @@ bool server::run() const
 		::pthread_detach(pthread);
 		
 		log << color::green << "done." << color::reset << log_console::l_endent;
-#endif
 	}
 }
 
-#if defined(linux)
+#else
 
+bool server::run() const
+{
+	int threads_count          = 0;
+	
+	int new_socket;
+	std::map<SOCKET, bool> is_client_processing;
+
+	struct sockaddr_in address { };
+	int addrlen = sizeof(address);
+
+	SOCKET new_socket;
+	
+	while (true)
+	{
+		errno = 0;
+		if (new_socket = ::accept(this->socket, (struct sockaddr*)&address, &addrlen); new_socket < 0)
+		{
+			error("accept() failed " << errno << " " << ::strerror(errno));
+			if (errno == EBADF || errno == EINVAL)
+			{
+				return false;
+			}
+			return true;
+		}
+		
+		log << "====== new connection ======\n socket = " << new_socket
+			<< "\n address = " << ::inet_ntoa(address.sin_addr)
+			<< "\n port = " << ::ntohs(address.sin_port)
+			<< "\n\n============================\n";
+		
+		auto* dat = new server_client_data{ };
+		dat->socket                   = new_socket;
+		dat->serv                     = const_cast<server*>(this);
+		dat->address                  = address;
+		dat->is_client_processing_ptr = &is_client_processing;
+		dat->thread_id                = ++threads_count;
+		dat->process_function         = process_function;
+		
+		log << "running client processing thread...\n";
+
+		CreateThread(nullptr, 0, process_client, (void*)dat, 0, 0);
+		
+		log << "done.\n";
+	}
+}
+
+#endif
+
+#if defined(linux)
 void* server::server_thread(void* args)
+#else
+DWORD WINAPI server::server_thread(void* args)
 #endif
 {
 	auto* server = static_cast<class server*>(args);
@@ -296,6 +422,9 @@ void* server::server_thread(void* args)
 	{ }
 #if defined(linux)
 	return new bool(true);
+#else
+	--server::server_threads;
+	return 0;
 #endif
 }
 
@@ -306,7 +435,24 @@ void server::run_server_thread()
 	pthread_create(&this->main_thread, nullptr, server_thread, static_cast<void*>(const_cast<server*>(this)));
 	pthread_detach(this->main_thread);
 	log << color::light << color::yellow << "done." << log_console::l_endent;
+#else
+	log << "starting main server thread...\n";
+	++server::server_threads;
+	this->main_thread = CreateThread(nullptr, 0, server_thread, static_cast<void*>(const_cast<server*>(this)), 0, 0);
+	log << "done.\n";
 #endif
+}
+
+inline void server::wait_for_all_servers()
+{
+	while (server::server_threads > 0)
+	{
+#if defined(linux)
+		::sleep(10000);
+#else
+		Sleep(10);
+#endif
+	}
 }
 
 #if defined(linux)
@@ -397,6 +543,32 @@ int server::get_socket() const
 	return socket;
 }
 
+#else
+
+DWORD WINAPI server::process_client(void* args)
+{
+	struct server_client_data& data = *static_cast<struct server_client_data*>(args);
+	int client_socket = data.socket;
+	log << "\nsocket : " << client_socket << "\n";
+	if ((*data.is_client_processing_ptr)[client_socket])
+	{
+		return 0;
+	}
+	(*data.is_client_processing_ptr)[client_socket] = true;
+
+	log << "processing client...\n\tthread_no = " << data.thread_id << ";\n";
+	while (data.process_function(data.socket, data.address, data.serv))
+	{
+	}
+	log << "job finished.\n\tthread_no = " << data.thread_id << ";\n";
+	return 0;
+}
+
+SOCKET server::get_socket() const
+{
+	return socket;
+}
+
 #endif
 
 int server::get_max_clients() const
@@ -404,14 +576,10 @@ int server::get_max_clients() const
 	return max_clients;
 }
 
-#if defined(linux)
-
 const sockaddr_in& server::get_address() const
 {
 	return address;
 }
-
-#endif
 
 client_process_function server::get_process_function() const
 {
@@ -423,6 +591,10 @@ server::~server()
 #if defined(linux)
 	pthread_kill(this->main_thread, 0);
 	::close(this->socket);
+#else
+	TerminateThread(this->main_thread, 0);
+	closesocket(this->socket);
+	WSACleanup();
 #endif
 }
 
@@ -437,10 +609,22 @@ public:
 	
 	explicit inet_io(int socket);
 
+#else
+	
+	explicit inet_io(SOCKET socket);
+
 #endif
+
+#if defined(linux)
 	
 	template <size_t max_attempts = 0>
 	bool write(const void* data, size_t size);
+
+#else
+	
+	bool write(const char* data, size_t size);
+
+#endif
 
 #if defined(linux)
 	
@@ -448,13 +632,21 @@ public:
 	
 	[[nodiscard]] int get_socket() const;
 
+#else
+	
+	size_t read(char* data, size_t size);
+
+	[[nodiscard]] SOCKET get_socket() const;
+
 #endif
 	
 	inline operator bool() const;
 
 #if defined(linux)
+	
 	static log_console log_;
 	static log_console err_;
+	
 #endif
 
 protected:
@@ -466,6 +658,8 @@ protected:
 
 #if defined(linux)
 	int socket;
+#else
+	SOCKET socket;
 #endif
 	bool sucess = true;
 };
@@ -482,10 +676,19 @@ log_console inet_io::err_(stderr);
 inet_io::inet_io(int socket) : socket(socket)
 { }
 
+#else
+
+inet_io::inet_io(SOCKET socket) : socket(socket)
+{ }
+
 #endif
 
+#if defined(linux)
 template <size_t max_attempts>
 bool inet_io::write(const void* data, size_t size)
+#else
+bool inet_io::write(const char* data, size_t size)
+#endif
 {
 	this->sucess = true;
 
@@ -514,6 +717,14 @@ bool inet_io::write(const void* data, size_t size)
 		goto fail;
 	}
 	
+	return wrote == size;
+#else
+	int wrote = send(this->socket, data, size, 0);
+	if (wrote == SOCKET_ERROR)
+	{
+		error("send() failed with error: " << WSAGetLastError());
+		goto fail;
+	}
 	return wrote == size;
 #endif
 
@@ -561,6 +772,28 @@ ssize_t inet_io::read(void* data, size_t size, bool non_block)
 }
 
 int inet_io::get_socket() const
+{
+	return socket;
+}
+
+#else
+
+size_t inet_io::read(char* data, size_t size)
+{
+	this->sucess = true;
+
+	int read = ::recv(this->socket, data, size, 0);
+	if (read <= 0)
+	{
+		error("read() failed with error: " << GetLastError());
+		this->sucess = false;
+		return 0;
+	}
+
+	return read;
+}
+
+SOCKET inet_io::get_socket() const
 {
 	return socket;
 }
@@ -617,11 +850,7 @@ inline inet_io& operator>>(inet_io& io, type& data)
 class client : public inet_io
 {
 public:
-#if defined(linux)
-	
 	client(const in_addr& server_address, uint16_t port);
-
-#endif
 	
 	bool connect();
 	
@@ -632,18 +861,15 @@ public:
 	~client();
 
 private:
-	uint16_t port;
-#if defined(linux)
+	uint16_t           port;
 	struct sockaddr_in server_address;
-#endif
 };
 
 // #definition-begin client
 
-#if defined(linux)
-
 client::client(const in_addr& server_address, uint16_t port) : server_address{AF_INET, htons(port), server_address}, port(port)
 {
+#if defined(linux)
 	log << color::green << "socket init...\nserver address: " << color::yellow << inet_ntoa(this->server_address.sin_addr)
 		<< color::green << ";\nsocket family: " << this->server_address.sin_family
 		<< color::green << ";\nport = " << ntohs(this->server_address.sin_port) << color::green << ";"
@@ -658,13 +884,23 @@ client::client(const in_addr& server_address, uint16_t port) : server_address{AF
 	}
 	
 	log << color::green << "success." << color::reset << log_console::l_endent;
-}
+#else
+	log << "socket init...\nserver address: " << inet_ntoa(this->server_address.sin_addr)
+		<< ";\nsocket family: " << this->server_address.sin_family
+		<< ";\nport = " << ntohs(this->server_address.sin_port) << ";\n";
+	this->socket = ::socket(AF_INET, SOCK_STREAM, 0);
+	if (this->socket == INVALID_SOCKET)
+	{
+		error("socket init failed with error: " << GetLastError());
+	}
 
+	log << "success.\n";
 #endif
+}
 
 bool client::connect()
 {
-	
+#if defined(linux)
 	log << color::green << "connecting..." << color::reset << log_console::l_endent;
 	errno = 0;
 	if (::connect(socket, (struct sockaddr*)&this->server_address, sizeof(this->server_address)) < 0)
@@ -675,6 +911,15 @@ bool client::connect()
 	
 	log << color::green << "success." << color::reset << log_console::l_endent;
 	return true;
+#else
+	log << "connecting...\n";
+	if (::connect(socket, (struct sockaddr*)&this->server_address, sizeof(this->server_address)) == SOCKET_ERROR)
+	{
+		error("connect() failed with error: " << GetLastError());
+		closesocket(socket);
+		socket = INVALID_SOCKET;
+	}
+#endif
 }
 
 uint16_t client::get_port() const
@@ -695,6 +940,8 @@ client::~client()
 {
 #if defined(linux)
 	::close(this->socket);
+#else
+	closesocket(this->socket);
 #endif
 }
 
