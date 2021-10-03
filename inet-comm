@@ -5,16 +5,10 @@
 #ifndef INET_COMM
 #define INET_COMM
 
-
-#include <cstring>
-#include <thread>
-#include <iostream>
-#include <map>
-#include <vector>
-#include <cassert>
-
 #if defined(linux)
 
+#include <cassert>
+#include <thread>
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <csignal>
@@ -26,11 +20,29 @@
 
 #else
 
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+
+#define _WINSOCK_DEPRECATED_NO_WARNINGS
+#define _CRT_SECURE_NO_WARNINGS
+
 #include <windows.h>
 #include <winsock2.h>
-#pragma comment(lib,"ws2_32.lib")
+#include <ws2tcpip.h>
+#include <iphlpapi.h>
+#include <stdio.h>
+
+#pragma comment(lib, "Ws2_32.lib")
 
 #endif
+
+#include <cstring>
+#include <iostream>
+#include <map>
+#include <vector>
+
+
 
 #if defined(linux)
 
@@ -49,6 +61,8 @@
 #define fatal_error(message) error(message); throw std::runtime_error(message)
 
 #endif
+
+
 
 #if defined(linux)
 
@@ -105,7 +119,11 @@ void suppress_signal::enable_err(bool status)
 
 class server;
 
+#if defined (linux)
 typedef bool (* client_process_function)(int socket, const sockaddr_in& address, server* server);
+#else
+typedef bool (* client_process_function)(SOCKET socket, const sockaddr_in& address, server* server);
+#endif
 
 struct server_client_data
 {
@@ -154,6 +172,10 @@ public:
 	static std::vector<struct ifaddrs*>& list_all_network_interfaces();
 	
 	[[nodiscard]] int get_socket() const;
+
+#else
+
+	[[nodiscard]] SOCKET get_socket() const;
 
 #endif
 	
@@ -264,7 +286,7 @@ server::server(int max_clients, const sockaddr_in& address, client_process_funct
 
 	if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
 	{
-		error("WSAStartup() failed error: " << WSAGetLastError());
+		error("WSAStartup() failed with error " << WSAGetLastError());
 		return;
 	}
 
@@ -279,14 +301,14 @@ server::server(int max_clients, const sockaddr_in& address, client_process_funct
 	socket = ::socket(AF_INET, SOCK_STREAM, 0);
 	if (socket == INVALID_SOCKET)
 	{
-		error("socket() failed " << errno << " " << ::strerror(errno) << ". socket : " << socket);
+		error("socket() failed with error " << GetLastError() << ". socket : " << socket);
 		return;
 	}
 	
 	errno = 0;
 	if (int ret = ::setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, (char*)(new int(1)), sizeof(int)); ret < 0)
 	{
-		error("setsockopt() failed " << errno << " " << ::strerror(errno));
+		error("setsockopt() failed with error" << GetLastError());
 		return;
 	}
 	
@@ -294,7 +316,7 @@ server::server(int max_clients, const sockaddr_in& address, client_process_funct
 	errno = 0;
 	if (int ret = ::bind(socket, (struct sockaddr*)&address, sizeof(address)); ret < 0)
 	{
-		error("bind() failed " << errno << " " << ::strerror(errno));
+		error("bind() failed with error " << GetLastError());
 		return;
 	}
 	
@@ -304,7 +326,7 @@ server::server(int max_clients, const sockaddr_in& address, client_process_funct
 	errno = 0;
 	if (listen(socket, max_clients) < 0)
 	{
-		error("listen() failed " << errno << " " << ::strerror(errno));
+		error("listen() failed with error " << GetLastError());
 		return;
 	}
 	log << "success.\n";
@@ -367,7 +389,6 @@ bool server::run() const
 {
 	int threads_count          = 0;
 	
-	int new_socket;
 	std::map<SOCKET, bool> is_client_processing;
 
 	struct sockaddr_in address { };
@@ -380,7 +401,7 @@ bool server::run() const
 		errno = 0;
 		if (new_socket = ::accept(this->socket, (struct sockaddr*)&address, &addrlen); new_socket < 0)
 		{
-			error("accept() failed " << errno << " " << ::strerror(errno));
+			error("accept() failed with error " << GetLastError());
 			if (errno == EBADF || errno == EINVAL)
 			{
 				return false;
@@ -814,15 +835,25 @@ inline inet_io& operator<<(inet_io& io, type data)
 	}
 	else if constexpr(std::is_same_v<std::remove_cvref_t<type>, const wchar_t*>)
 	{
-		io.write(data, wcslen(data));
+#if defined(linux)
+		io.write(data,
+#else
+		io.write((const char*)data,
+#endif
+			wcslen(data) * sizeof(*data));
 	}
 	else if constexpr(std::is_same_v<std::remove_cvref_t<type>, std::string> || std::is_same_v<std::remove_cvref_t<type>, std::wstring>)
 	{
-		io.write(data.c_str(), data.size());
+#if defined(linux)
+		io.write(data.c_str(),
+#else
+		io.write((const char*)data.c_str(),
+#endif
+			data.size() * sizeof(std::remove_cvref_t<type>::value_type));
 	}
 	else if constexpr(std::is_arithmetic_v<type>)
 	{
-		io.write(&data, sizeof(data));
+		io.write((const char*)&data, sizeof(data));
 	}
 	else
 	{
@@ -836,7 +867,7 @@ inline inet_io& operator>>(inet_io& io, type& data)
 {
 	if constexpr(!std::is_const_v<type> && std::is_arithmetic_v<type>)
 	{
-		io.read(&data, sizeof(data));
+		io.read(reinterpret_cast<char*>(&data), sizeof(data));
 	}
 	else
 	{
@@ -892,6 +923,7 @@ client::client(const in_addr& server_address, uint16_t port) : server_address{AF
 	if (this->socket == INVALID_SOCKET)
 	{
 		error("socket init failed with error: " << GetLastError());
+		return;
 	}
 
 	log << "success.\n";
@@ -910,7 +942,6 @@ bool client::connect()
 	}
 	
 	log << color::green << "success." << color::reset << log_console::l_endent;
-	return true;
 #else
 	log << "connecting...\n";
 	if (::connect(socket, (struct sockaddr*)&this->server_address, sizeof(this->server_address)) == SOCKET_ERROR)
@@ -918,8 +949,12 @@ bool client::connect()
 		error("connect() failed with error: " << GetLastError());
 		closesocket(socket);
 		socket = INVALID_SOCKET;
+		return false;
 	}
+
+	log << "success.\n";
 #endif
+	return true;
 }
 
 uint16_t client::get_port() const
