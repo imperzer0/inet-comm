@@ -43,7 +43,6 @@
 #include <vector>
 
 
-
 #if defined(linux)
 
 #define log log_ << log_console::l_lock << l_time << l_location
@@ -61,7 +60,6 @@
 #define fatal_error(message) error(message); throw std::runtime_error(message)
 
 #endif
-
 
 
 #if defined(linux)
@@ -120,9 +118,13 @@ void suppress_signal::enable_err(bool status)
 class server;
 
 #if defined (linux)
+
 typedef bool (* client_process_function)(int socket, const sockaddr_in& address, server* server);
+
 #else
+
 typedef bool (* client_process_function)(SOCKET socket, const sockaddr_in& address, server* server);
+
 #endif
 
 struct server_client_data
@@ -138,6 +140,7 @@ struct server_client_data
 	server* serv;
 	client_process_function process_function;
 	int                     thread_id;
+	int* threads_count;
 };
 
 class server
@@ -145,7 +148,7 @@ class server
 public:
 	server(int max_clients, const struct sockaddr_in& address, client_process_function process_function, void* extra = nullptr);
 	
-	[[nodiscard]] bool run() const;
+	[[nodiscard]] bool run(bool wait = false) const;
 
 #if defined(linux)
 	
@@ -154,10 +157,10 @@ public:
 #else
 	
 	static DWORD WINAPI server_thread(void* args);
-	
+
 #endif
 	
-	void run_server_thread();
+	void run_server_thread(bool wait_for_child_threads = false);
 	
 	static void wait_for_all_servers();
 
@@ -174,7 +177,7 @@ public:
 	[[nodiscard]] int get_socket() const;
 
 #else
-
+	
 	[[nodiscard]] SOCKET get_socket() const;
 
 #endif
@@ -193,7 +196,7 @@ public:
 	
 	static log_console log_;
 	static log_console err_;
-	
+
 #endif
 
 private:
@@ -203,15 +206,17 @@ private:
 	
 	pthread_t main_thread = 0;
 	int       socket;
-	
+
 #else
 	
 	static DWORD WINAPI process_client(void* args);
 	
 	SOCKET socket;
 	HANDLE main_thread = nullptr;
-	
+
 #endif
+	bool wait_for_child_threads = false;
+	
 	int                     max_clients;
 	struct sockaddr_in      address;
 	client_process_function process_function;
@@ -336,9 +341,9 @@ server::server(int max_clients, const sockaddr_in& address, client_process_funct
 
 #if defined(linux)
 
-bool server::run() const
+bool server::run(bool wait) const
 {
-	int threads_count          = 0;
+	int threads_count          = 0, thread_id = 0;
 	
 	std::map<int, bool> is_client_processing;
 	
@@ -370,7 +375,8 @@ bool server::run() const
 		dat->serv                     = const_cast<server*>(this);
 		dat->address                  = address;
 		dat->is_client_processing_ptr = &is_client_processing;
-		dat->thread_id                = ++threads_count;
+		dat->thread_id                = ++thread_id;
+		dat->threads_count            = &++threads_count;
 		dat->process_function         = process_function;
 		
 		log << color::green << "running client processing thread..." << color::reset << log_console::l_endent;
@@ -381,13 +387,18 @@ bool server::run() const
 		
 		log << color::green << "done." << color::reset << log_console::l_endent;
 	}
+	
+	while (wait && threads_count > 0)
+	{
+		::usleep(10000);
+	}
 }
 
 #else
 
-bool server::run() const
+bool server::run(bool wait) const
 {
-	int threads_count          = 0;
+	int threads_count          = 0, thread_id = 0;
 	
 	std::map<SOCKET, bool> is_client_processing;
 
@@ -419,7 +430,8 @@ bool server::run() const
 		dat->serv                     = const_cast<server*>(this);
 		dat->address                  = address;
 		dat->is_client_processing_ptr = &is_client_processing;
-		dat->thread_id                = ++threads_count;
+		dat->thread_id                = ++thread_id;
+		dat->threads_count            = &++threads_count;
 		dat->process_function         = process_function;
 		
 		log << "running client processing thread...\n";
@@ -427,6 +439,11 @@ bool server::run() const
 		CreateThread(nullptr, 0, process_client, (void*)dat, 0, 0);
 		
 		log << "done.\n";
+	}
+	
+	while (wait && threads_count > 0)
+	{
+		Sleep(10);
 	}
 }
 
@@ -439,18 +456,20 @@ DWORD WINAPI server::server_thread(void* args)
 #endif
 {
 	auto* server = static_cast<class server*>(args);
-	while (server->run())
+	while (server->run(server->wait_for_child_threads))
 	{ }
+	--server::server_threads;
 #if defined(linux)
 	return new bool(true);
 #else
-	--server::server_threads;
 	return 0;
 #endif
 }
 
-void server::run_server_thread()
+void server::run_server_thread(bool wait_for_child_threads)
 {
+	this->wait_for_child_threads = wait_for_child_threads;
+	++server::server_threads;
 #if defined(linux)
 	log << color::light << color::yellow << "starting main server thread..." << log_console::l_endent;
 	pthread_create(&this->main_thread, nullptr, server_thread, static_cast<void*>(const_cast<server*>(this)));
@@ -458,7 +477,6 @@ void server::run_server_thread()
 	log << color::light << color::yellow << "done." << log_console::l_endent;
 #else
 	log << "starting main server thread...\n";
-	++server::server_threads;
 	this->main_thread = CreateThread(nullptr, 0, server_thread, static_cast<void*>(const_cast<server*>(this)), 0, 0);
 	log << "done.\n";
 #endif
@@ -469,7 +487,7 @@ inline void server::wait_for_all_servers()
 	while (server::server_threads > 0)
 	{
 #if defined(linux)
-		::sleep(10000);
+		::usleep(10000);
 #else
 		Sleep(10);
 #endif
@@ -667,7 +685,7 @@ public:
 	
 	static log_console log_;
 	static log_console err_;
-	
+
 #endif
 
 protected:
@@ -705,6 +723,7 @@ inet_io::inet_io(SOCKET socket) : socket(socket)
 #endif
 
 #if defined(linux)
+
 template <size_t max_attempts>
 bool inet_io::write(const void* data, size_t size)
 #else
@@ -836,20 +855,22 @@ inline inet_io& operator<<(inet_io& io, type data)
 	else if constexpr(std::is_same_v<std::remove_cvref_t<type>, const wchar_t*>)
 	{
 #if defined(linux)
-		io.write(data,
+		io.write(
+				data,
 #else
-		io.write((const char*)data,
+				io.write((const char*)data,
 #endif
-			wcslen(data) * sizeof(*data));
+				wcslen(data) * sizeof(*data));
 	}
 	else if constexpr(std::is_same_v<std::remove_cvref_t<type>, std::string> || std::is_same_v<std::remove_cvref_t<type>, std::wstring>)
 	{
 #if defined(linux)
-		io.write(data.c_str(),
+		io.write(
+				data.c_str(),
 #else
-		io.write((const char*)data.c_str(),
+				io.write((const char*)data.c_str(),
 #endif
-			data.size() * sizeof(std::remove_cvref_t<type>::value_type));
+				data.size() * sizeof(typename std::remove_cvref_t<type>::value_type));
 	}
 	else if constexpr(std::is_arithmetic_v<type>)
 	{
