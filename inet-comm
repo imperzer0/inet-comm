@@ -59,6 +59,9 @@
 #define error(message) (err << "error" << " : " << message << "\n")
 #define fatal_error(message) error(message); throw std::runtime_error(message)
 
+typedef decltype(in_addr::S_un.S_addr) in_addr_t;
+typedef ADDRESS_FAMILY sa_family_t;
+
 #endif
 
 
@@ -117,13 +120,91 @@ void suppress_signal::enable_err(bool status)
 
 class server;
 
+in_addr_t inet_pton(sa_family_t af, const char* address)
+{
+	in_addr_t ret{0};
+	inet_pton(af, address, &ret);
+	return ret;
+}
+
+class inet_address
+{
+public:
+	inet_address() = default;
+	
+	inet_address(const sockaddr_in& address);
+	
+	inet_address(sa_family_t family, uint16_t port, in_addr_t address);
+	
+	inet_address(sa_family_t family, uint16_t port, const char* address);
+	
+	[[nodiscard]] const char* get_address() const;
+	
+	[[nodiscard]] uint16_t get_port() const;
+	
+	[[nodiscard]] sa_family_t get_family() const;
+	
+	[[nodiscard]] sockaddr_in get_raw() const;
+	
+	void set_address(sa_family_t family, const char* address);
+
+private:
+	friend class server;
+	
+	friend class inet_io;
+	
+	sockaddr_in address;
+};
+
+// #definition-begin inet_address
+
+inet_address::inet_address(const sockaddr_in& address) : address(address)
+{ }
+
+inet_address::inet_address(sa_family_t family, uint16_t port, in_addr_t address) : inet_address(
+		*new sockaddr_in{family, ::htons(port), in_addr{.S_un = {.S_addr = address}}}
+)
+{ }
+
+inet_address::inet_address(sa_family_t family, uint16_t port, const char* address) : inet_address(family, port, inet_pton(family, address))
+{ }
+
+const char* inet_address::get_address() const
+{
+	return inet_ntoa(this->address.sin_addr);
+}
+
+uint16_t inet_address::get_port() const
+{
+	return ntohs(this->address.sin_port);
+}
+
+sa_family_t inet_address::get_family() const
+{
+	return ntohs(this->address.sin_port);
+}
+
+sockaddr_in inet_address::get_raw() const
+{
+	return this->address;
+}
+
+void inet_address::set_address(sa_family_t family, const char* address)
+{
+	inet_pton(family, address, &this->address.sin_addr.s_addr);
+	this->address.sin_family = family;
+}
+
+// #definition-end inet_address
+
+
 #if defined (linux)
 
-typedef bool (* client_process_function)(int socket, const sockaddr_in& address, server* server);
+typedef bool (* client_process_function)(int socket, const inet_address& address, server* server);
 
 #else
 
-typedef bool (* client_process_function)(SOCKET socket, const sockaddr_in& address, server* server);
+typedef bool (* client_process_function)(SOCKET socket, const inet_address& address, server* server);
 
 #endif
 
@@ -136,7 +217,7 @@ struct server_client_data
 	SOCKET socket;
 	std::map<SOCKET, bool>* is_client_processing_ptr;
 #endif
-	sockaddr_in address;
+	inet_address address;
 	server* serv;
 	client_process_function process_function;
 	int                     thread_id;
@@ -146,7 +227,7 @@ struct server_client_data
 class server
 {
 public:
-	server(int max_clients, const struct sockaddr_in& address, client_process_function process_function, void* extra = nullptr);
+	server(int max_clients, const inet_address& address, client_process_function process_function, void* extra = nullptr);
 	
 	[[nodiscard]] bool run(bool wait = false) const;
 
@@ -184,7 +265,7 @@ public:
 	
 	[[nodiscard]] int get_max_clients() const;
 	
-	[[nodiscard]] const sockaddr_in& get_address() const;
+	[[nodiscard]] const inet_address& get_address() const;
 	
 	[[nodiscard]] client_process_function get_process_function() const;
 	
@@ -218,7 +299,7 @@ private:
 	bool wait_for_child_threads = false;
 	
 	int                     max_clients;
-	struct sockaddr_in      address;
+	inet_address            address;
 	client_process_function process_function;
 #if defined(linux)
 	static pthread_mutex_t mutex;
@@ -237,12 +318,12 @@ log_console     server::err_(stderr);
 pthread_mutex_t server::mutex = PTHREAD_MUTEX_INITIALIZER;
 
 
-server::server(int max_clients, const sockaddr_in& address, client_process_function process_function, void* extra) :
+server::server(int max_clients, const inet_address& address, client_process_function process_function, void* extra) :
 		max_clients(max_clients), address(address), process_function(process_function), extra(extra)
 {
-	log << color::green << "socket init...\nserver address: " << color::yellow << inet_ntoa(address.sin_addr)
-		<< color::green << ";\nsocket family: " << address.sin_family
-		<< color::green << ";\nport = " << ntohs(address.sin_port)
+	log << color::green << "socket init...\nserver address: " << color::yellow << address.get_address()
+		<< color::green << ";\nsocket family: " << address.get_family()
+		<< color::green << ";\nport = " << address.get_port()
 		<< color::green << ";\n\tmax connections accept = " << max_clients
 		<< color::green << ";" << color::reset << log_console::l_endent;
 	errno = 0;
@@ -262,7 +343,7 @@ server::server(int max_clients, const sockaddr_in& address, client_process_funct
 	
 	log << color::green << "binding..." << color::reset << log_console::l_endent;
 	errno = 0;
-	if (int ret = ::bind(socket, (struct sockaddr*)&address, sizeof(address)); ret < 0)
+	if (int ret = ::bind(socket, (struct sockaddr*)&address.address, sizeof(address.address)); ret < 0)
 	{
 		error("bind() failed " << errno << " " << color::bold << ::strerror(errno) << color::reset);
 		return;
@@ -282,7 +363,7 @@ server::server(int max_clients, const sockaddr_in& address, client_process_funct
 
 #else
 
-server::server(int max_clients, const sockaddr_in& address, client_process_function process_function, void* extra) :
+server::server(int max_clients, const inet_address& address, client_process_function process_function, void* extra) :
 		max_clients(max_clients), address(address), process_function(process_function), extra(extra)
 {
 	log << "winsock lib init...\n";
@@ -297,9 +378,9 @@ server::server(int max_clients, const sockaddr_in& address, client_process_funct
 
 	log << "done.\n";
 
-	log << "socket init...\nserver address: " << inet_ntoa(address.sin_addr)
-		<< ";\nsocket family: " << address.sin_family
-		<< ";\nport = " << ntohs(address.sin_port)
+	log << "socket init...\nserver address: " << address.get_address()
+		<< ";\nsocket family: " << address.get_family()
+		<< ";\nport = " << address.get_port()
 		<< ";\n\tmax connections accept = " << max_clients
 		<< ";\n";
 	errno = 0;
@@ -319,7 +400,7 @@ server::server(int max_clients, const sockaddr_in& address, client_process_funct
 	
 	log << "binding...\n";
 	errno = 0;
-	if (int ret = ::bind(socket, (struct sockaddr*)&address, sizeof(address)); ret < 0)
+	if (int ret = ::bind(socket, (struct sockaddr*)&address.address, sizeof(address.address)); ret < 0)
 	{
 		error("bind() failed with error " << GetLastError());
 		return;
@@ -362,7 +443,7 @@ bool server::run(bool wait) const
 			{
 				return false;
 			}
-			return true;
+			break;
 		}
 		
 		log << color::green << "====== new connection ======\n socket = " << color::reset << new_socket
@@ -373,7 +454,7 @@ bool server::run(bool wait) const
 		auto* dat = new server_client_data{ };
 		dat->socket                   = new_socket;
 		dat->serv                     = const_cast<server*>(this);
-		dat->address                  = address;
+		dat->address                  = inet_address(address);
 		dat->is_client_processing_ptr = &is_client_processing;
 		dat->thread_id                = ++thread_id;
 		dat->threads_count            = &++threads_count;
@@ -392,6 +473,8 @@ bool server::run(bool wait) const
 	{
 		::usleep(10000);
 	}
+	
+	return true;
 }
 
 #else
@@ -417,7 +500,7 @@ bool server::run(bool wait) const
 			{
 				return false;
 			}
-			return true;
+			break;
 		}
 		
 		log << "====== new connection ======\n socket = " << new_socket
@@ -445,6 +528,8 @@ bool server::run(bool wait) const
 	{
 		Sleep(10);
 	}
+	
+	return true;
 }
 
 #endif
@@ -587,7 +672,7 @@ int server::get_socket() const
 DWORD WINAPI server::process_client(void* args)
 {
 	struct server_client_data& data = *static_cast<struct server_client_data*>(args);
-	int client_socket = data.socket;
+	SOCKET client_socket = data.socket;
 	log << "\nsocket : " << client_socket << "\n";
 	if ((*data.is_client_processing_ptr)[client_socket])
 	{
@@ -615,9 +700,9 @@ int server::get_max_clients() const
 	return max_clients;
 }
 
-const sockaddr_in& server::get_address() const
+const inet_address& server::get_address() const
 {
-	return address;
+	return this->address;
 }
 
 client_process_function server::get_process_function() const
@@ -723,7 +808,6 @@ inet_io::inet_io(SOCKET socket) : socket(socket)
 #endif
 
 #if defined(linux)
-
 template <size_t max_attempts>
 bool inet_io::write(const void* data, size_t size)
 #else
@@ -902,29 +986,28 @@ inline inet_io& operator>>(inet_io& io, type& data)
 class client : public inet_io
 {
 public:
-	client(const in_addr& server_address, uint16_t port);
+	client(const inet_address& server_address);
 	
 	bool connect();
 	
 	[[nodiscard]] uint16_t get_port() const;
 	
-	[[nodiscard]] const sockaddr_in& get_server_address() const;
+	[[nodiscard]] const inet_address& get_server_address() const;
 	
 	~client();
 
 private:
-	uint16_t           port;
-	struct sockaddr_in server_address;
+	inet_address server_address;
 };
 
 // #definition-begin client
 
-client::client(const in_addr& server_address, uint16_t port) : server_address{AF_INET, htons(port), server_address}, port(port)
+client::client(const inet_address& server_address) : server_address(server_address)
 {
 #if defined(linux)
-	log << color::green << "socket init...\nserver address: " << color::yellow << inet_ntoa(this->server_address.sin_addr)
-		<< color::green << ";\nsocket family: " << this->server_address.sin_family
-		<< color::green << ";\nport = " << ntohs(this->server_address.sin_port) << color::green << ";"
+	log << color::green << "socket init...\nserver address: " << color::yellow << this->server_address.get_address()
+		<< color::green << ";\nsocket family: " << this->server_address.get_family()
+		<< color::green << ";\nport = " << this->server_address.get_port() << color::green << ";"
 		<< color::reset << log_console::l_endent;
 	
 	errno = 0;
@@ -937,9 +1020,9 @@ client::client(const in_addr& server_address, uint16_t port) : server_address{AF
 	
 	log << color::green << "success." << color::reset << log_console::l_endent;
 #else
-	log << "socket init...\nserver address: " << inet_ntoa(this->server_address.sin_addr)
-		<< ";\nsocket family: " << this->server_address.sin_family
-		<< ";\nport = " << ntohs(this->server_address.sin_port) << ";\n";
+	log << "socket init...\nserver address: " << this->server_address.get_address()
+		<< ";\nsocket family: " << this->server_address.get_family()
+		<< ";\nport = " << this->server_address.get_port() << ";\n";
 	this->socket = ::socket(AF_INET, SOCK_STREAM, 0);
 	if (this->socket == INVALID_SOCKET)
 	{
@@ -980,12 +1063,12 @@ bool client::connect()
 
 uint16_t client::get_port() const
 {
-	return port;
+	return this->server_address.get_port();
 }
 
 #if defined(linux)
 
-const sockaddr_in& client::get_server_address() const
+const inet_address& client::get_server_address() const
 {
 	return server_address;
 }
