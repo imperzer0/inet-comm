@@ -162,7 +162,13 @@ inet_address::inet_address(const sockaddr_in& address) : address(address)
 { }
 
 inet_address::inet_address(sa_family_t family, uint16_t port, in_addr_t address) : inet_address(
-		*new sockaddr_in{family, ::htons(port), in_addr{.S_un = {.S_addr = address}}}
+		*new sockaddr_in{
+				family, ::htons(port),
+#if defined(linux)
+				in_addr{address}}
+#else
+				in_addr{.S_un = {.S_addr = address}}}
+#endif
 )
 { }
 
