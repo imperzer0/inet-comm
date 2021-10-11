@@ -572,10 +572,10 @@ void server::run_server_thread(bool wait_for_child_threads)
 	this->wait_for_child_threads = wait_for_child_threads;
 	++server::server_threads;
 #if defined(linux)
-	log << color::light << color::yellow << "starting main server thread..." << log_console::l_endent;
+	log << color::faint << color::yellow << "starting main server thread..." << log_console::l_endent;
 	pthread_create(&this->main_thread, nullptr, server_thread, static_cast<void*>(const_cast<server*>(this)));
 	pthread_detach(this->main_thread);
-	log << color::light << color::yellow << "done." << log_console::l_endent;
+	log << color::faint << color::yellow << "done." << log_console::l_endent;
 #else
 	log << "starting main server thread...\n";
 	this->main_thread = CreateThread(nullptr, 0, server_thread, static_cast<void*>(const_cast<server*>(this)), 0, 0);
@@ -601,11 +601,11 @@ void server::open_port_in_iptables(uint16_t port)
 {
 	if (!geteuid())
 	{
-		log << color::light << color::green << "executing opening ports command..." << color::reset << log_console::l_endent;
+		log << color::faint << color::green << "executing opening ports command..." << color::reset << log_console::l_endent;
 		std::string cmd("sudo iptables -A ");
 		system((cmd + "INPUT -p tcp --dport " + std::to_string(port) + " -j ACCEPT").c_str());
 		system((cmd + "OUTPUT -p tcp --dport " + std::to_string(port) + " -j ACCEPT").c_str());
-		log << color::light << color::green << "executed." << color::reset << log_console::l_endent;
+		log << color::faint << color::green << "executed." << color::reset << log_console::l_endent;
 	}
 }
 
@@ -613,11 +613,11 @@ void server::close_port_in_iptables(uint16_t port)
 {
 	if (!geteuid())
 	{
-		log << color::light << color::green << "executing opening ports command..." << color::reset << log_console::l_endent;
+		log << color::faint << color::green << "executing opening ports command..." << color::reset << log_console::l_endent;
 		std::string cmd("sudo iptables -D ");
 		system((cmd + "INPUT -p tcp --dport " + std::to_string(port) + " -j ACCEPT").c_str());
 		system((cmd + "OUTPUT -p tcp --dport " + std::to_string(port) + " -j ACCEPT").c_str());
-		log << color::light << color::green << "executed." << color::reset << log_console::l_endent;
+		log << color::faint << color::green << "executed." << color::reset << log_console::l_endent;
 	}
 }
 
@@ -676,7 +676,7 @@ void* server::process_client(void* args)
 	log << color::green << "processing client...\n\tthread_no = " << data.thread_id << color::green << ";" << color::reset << log_console::l_endent;
 	while (data.process_function(data.socket, data.address, data.serv))
 	{ }
-	log << color::light << "job finished.\n\tthread_no = " << data.thread_id << ";" << color::reset << log_console::l_endent;
+	log << color::faint << "job finished.\n\tthread_no = " << data.thread_id << ";" << color::reset << log_console::l_endent;
 	return new bool(true);
 }
 
@@ -843,7 +843,7 @@ bool inet_io::write(const char* data, size_t size)
 	
 	for (size_t attempt = 0; wrote < size && attempt < max_attempts; ++attempt)
 	{
-		log << color::light << color::green << "wrote only " << wrote << color::green << "bytes of data - trying to write rest." << color::reset
+		log << color::faint << color::green << "wrote only " << wrote << color::green << "bytes of data - trying to write rest." << color::reset
 			<< log_console::l_endent;
 		*reinterpret_cast<const char**>(&data) += wrote;
 		size -= wrote;
