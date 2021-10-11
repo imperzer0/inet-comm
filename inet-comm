@@ -45,8 +45,8 @@
 
 #if defined(linux)
 
-#define log log_ << log_console::l_lock << l_time << l_location
-#define err err_ << log_console::l_lock << l_time << l_location
+#define log log_ << log_console::l_lock << log_console::l_localtime << l_location
+#define err err_ << log_console::l_lock << log_console::l_localtime << l_location
 
 #define error(message) (log << color::red << color::bold << "error" << color::reset << " : " << color::red << color::italic << message << color::reset << log_console::l_endent)
 #define fatal_error(message) error(message); throw std::runtime_error(message)
@@ -336,14 +336,18 @@ server::server(int max_clients, const inet_address& address, client_process_func
 	socket = ::socket(AF_INET, SOCK_STREAM, 0);
 	if (socket < 0)
 	{
-		error("socket() failed " << errno << " " << color::bold << ::strerror(errno) << color::reset << color::red << ". socket : " << socket);
+		char error[128];
+		strerror_r(errno, error, 128);
+		error("socket() failed " << errno << " " << color::bold << error << color::reset << color::red << ". socket : " << socket);
 		return;
 	}
 	
 	errno = 0;
 	if (int ret = ::setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, (char*)(new int(1)), sizeof(int)); ret < 0)
 	{
-		error("setsockopt() failed " << errno << " " << color::bold << ::strerror(errno) << color::reset);
+		char error[128];
+		strerror_r(errno, error, 128);
+		error("setsockopt() failed " << errno << " " << color::bold << error << color::reset);
 		return;
 	}
 	
@@ -351,7 +355,9 @@ server::server(int max_clients, const inet_address& address, client_process_func
 	errno = 0;
 	if (int ret = ::bind(socket, (struct sockaddr*)&address.address, sizeof(address.address)); ret < 0)
 	{
-		error("bind() failed " << errno << " " << color::bold << ::strerror(errno) << color::reset);
+		char error[128];
+		strerror_r(errno, error, 128);
+		error("bind() failed " << errno << " " << color::bold << error << color::reset);
 		return;
 	}
 	
@@ -361,7 +367,9 @@ server::server(int max_clients, const inet_address& address, client_process_func
 	errno = 0;
 	if (listen(socket, max_clients) < 0)
 	{
-		error("listen() failed " << errno << " " << color::bold << ::strerror(errno) << color::reset);
+		char error[128];
+		strerror_r(errno, error, 128);
+		error("listen() failed " << errno << " " << color::bold << error << color::reset);
 		return;
 	}
 	log << color::green << "success." << color::reset << log_console::l_endent;
@@ -444,7 +452,9 @@ bool server::run(bool wait) const
 		errno = 0;
 		if (new_socket = ::accept(this->socket, (struct sockaddr*)&address, &addrlen); new_socket < 0)
 		{
-			error("accept() failed " << errno << " " << color::bold << ::strerror(errno) << color::reset);
+			char error[128];
+			strerror_r(errno, error, 128);
+			error("accept() failed " << errno << " " << color::bold << error << color::reset);
 			if (errno == EBADF || errno == EINVAL)
 			{
 				return false;
@@ -634,7 +644,9 @@ std::vector<struct ifaddrs*>& server::list_all_network_interfaces()
 	
 	if (::getifaddrs(&ifaddr) == -1)
 	{
-		error("getifaddrs() failed " << errno << " " << color::bold << ::strerror(errno) << color::reset << ".");
+		char error[128];
+		strerror_r(errno, error, 128);
+		error("getifaddrs() failed " << errno << " " << color::bold << error << color::reset << ".");
 		return *result;
 	}
 	
@@ -860,7 +872,9 @@ bool inet_io::write(const char* data, size_t size)
 
 fail:
 #if defined(linux)
-	error("write() failed " << errno << " " << color::bold << ::strerror(errno) << color::reset << color::red << ".");
+	char error[128];
+	strerror_r(errno, error, 128);
+	error("write() failed " << errno << " " << color::bold << error << color::reset << color::red << ".");
 #endif
 	this->sucess = false;
 	return false;
@@ -877,7 +891,9 @@ ssize_t inet_io::read(void* data, size_t size, bool non_block)
 		flags = fcntl(this->socket, F_GETFL, 0);
 		if (::fcntl(this->socket, F_SETFL, flags | O_NONBLOCK) < 0)
 		{
-			error("fcntl() failed " << errno << " " << color::bold << ::strerror(errno) << color::reset << color::red << ".");
+			char error[128];
+			strerror_r(errno, error, 128);
+			error("fcntl() failed " << errno << " " << color::bold << error << color::reset << color::red << ".");
 			this->sucess = false;
 		}
 	}
@@ -885,7 +901,9 @@ ssize_t inet_io::read(void* data, size_t size, bool non_block)
 	ssize_t read = ::read(this->socket, data, size);
 	if (read <= 0)
 	{
-		error("read() failed " << errno << " " << color::bold << ::strerror(errno) << color::reset << color::red << ".");
+		char error[128];
+		strerror_r(errno, error, 128);
+		error("read() failed " << errno << " " << color::bold << error << color::reset << color::red << ".");
 		this->sucess = false;
 	}
 	
@@ -893,7 +911,9 @@ ssize_t inet_io::read(void* data, size_t size, bool non_block)
 	{
 		if (::fcntl(this->socket, F_SETFL, flags))
 		{
-			error("fcntl() failed " << errno << " " << color::bold << ::strerror(errno) << color::reset << color::red << ".");
+			char error[128];
+			strerror_r(errno, error, 128);
+			error("fcntl() failed " << errno << " " << color::bold << error << color::reset << color::red << ".");
 			this->sucess = false;
 		}
 	}
@@ -1020,7 +1040,9 @@ client::client(const inet_address& server_address) : server_address(server_addre
 	this->socket = ::socket(AF_INET, SOCK_STREAM, 0);
 	if (this->socket < 0)
 	{
-		error("socket init failed " << errno << " " << color::bold << ::strerror(errno) << color::reset << color::red << ". socket : " << socket);
+		char error[128];
+		strerror_r(errno, error, 128);
+		error("socket init failed " << errno << " " << color::bold << error << color::reset << color::red << ". socket : " << socket);
 		return;
 	}
 	
@@ -1047,7 +1069,9 @@ bool client::connect()
 	errno = 0;
 	if (::connect(socket, (struct sockaddr*)&this->server_address, sizeof(this->server_address)) < 0)
 	{
-		error("connection failed " << errno << " " << color::bold << ::strerror(errno) << color::reset);
+		char error[128];
+		strerror_r(errno, error, 128);
+		error("connection failed " << errno << " " << color::bold << error << color::reset);
 		return false;
 	}
 	
