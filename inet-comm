@@ -167,7 +167,7 @@ inet_address::inet_address(sa_family_t family, uint16_t port, in_addr_t address)
 #if defined(linux)
 				in_addr{address}}
 #else
-				in_addr{.S_un = {.S_addr = address}}}
+		in_addr{.S_un = {.S_addr = address}}}
 #endif
 )
 { }
@@ -226,7 +226,7 @@ struct server_client_data
 	inet_address address;
 	server* serv;
 	client_process_function process_function;
-	int                     thread_id;
+	int thread_id;
 	int* threads_count;
 };
 
@@ -292,7 +292,7 @@ private:
 	static void* process_client(void* args);
 	
 	pthread_t main_thread = 0;
-	int       socket;
+	int socket;
 
 #else
 	
@@ -304,8 +304,8 @@ private:
 #endif
 	bool wait_for_child_threads = false;
 	
-	int                     max_clients;
-	inet_address            address;
+	int max_clients;
+	inet_address address;
 	client_process_function process_function;
 #if defined(linux)
 	static pthread_mutex_t mutex;
@@ -315,7 +315,7 @@ private:
 
 // #definition-begin server
 
-int server::server_threads    = 0;
+int server::server_threads = 0;
 
 #if defined(linux)
 
@@ -438,12 +438,12 @@ server::server(int max_clients, const inet_address& address, client_process_func
 
 bool server::run(bool wait) const
 {
-	int threads_count          = 0, thread_id = 0;
+	int threads_count = 0, thread_id = 0;
 	
 	std::map<int, bool> is_client_processing;
 	
 	struct sockaddr_in address{ };
-	socklen_t          addrlen = sizeof(address);
+	socklen_t addrlen = sizeof(address);
 	
 	int new_socket;
 	
@@ -468,13 +468,13 @@ bool server::run(bool wait) const
 			<< color::green << "\n\n============================" << color::reset << log_console::l_endent;
 		
 		auto* dat = new server_client_data{ };
-		dat->socket                   = new_socket;
-		dat->serv                     = const_cast<server*>(this);
-		dat->address                  = inet_address(address);
+		dat->socket = new_socket;
+		dat->serv = const_cast<server*>(this);
+		dat->address = inet_address(address);
 		dat->is_client_processing_ptr = &is_client_processing;
-		dat->thread_id                = ++thread_id;
-		dat->threads_count            = &++threads_count;
-		dat->process_function         = process_function;
+		dat->thread_id = ++thread_id;
+		dat->threads_count = &++threads_count;
+		dat->process_function = process_function;
 		
 		log << color::green << "running client processing thread..." << color::reset << log_console::l_endent;
 		
@@ -551,6 +551,7 @@ bool server::run(bool wait) const
 #endif
 
 #if defined(linux)
+
 void* server::server_thread(void* args)
 #else
 DWORD WINAPI server::server_thread(void* args)
@@ -803,7 +804,7 @@ protected:
 #else
 	SOCKET socket;
 #endif
-	bool sucess = true;
+	bool success = true;
 };
 
 // #definition-begin inet_io
@@ -826,13 +827,14 @@ inet_io::inet_io(SOCKET socket) : socket(socket)
 #endif
 
 #if defined(linux)
+
 template <size_t max_attempts>
 bool inet_io::write(const void* data, size_t size)
 #else
 bool inet_io::write(const char* data, size_t size)
 #endif
 {
-	this->sucess = true;
+	this->success = true;
 
 #if defined(linux)
 	ssize_t wrote = ::write(this->socket, data, size);
@@ -858,8 +860,6 @@ bool inet_io::write(const char* data, size_t size)
 	{
 		goto fail;
 	}
-	
-	return wrote == size;
 #else
 	int wrote = send(this->socket, data, size, 0);
 	if (wrote == SOCKET_ERROR)
@@ -867,8 +867,11 @@ bool inet_io::write(const char* data, size_t size)
 		error("send() failed with error: " << WSAGetLastError());
 		goto fail;
 	}
-	return wrote == size;
 #endif
+	
+	this->success = wrote == size;
+	
+	return wrote == size;
 
 fail:
 #if defined(linux)
@@ -876,7 +879,7 @@ fail:
 	strerror_r(errno, error, 128);
 	error("write() failed " << errno << " " << color::bold << error << color::reset << color::red << ".");
 #endif
-	this->sucess = false;
+	this->success = false;
 	return false;
 }
 
@@ -884,7 +887,7 @@ fail:
 
 ssize_t inet_io::read(void* data, size_t size, bool non_block)
 {
-	this->sucess = true;
+	this->success = true;
 	int flags;
 	if (non_block)
 	{
@@ -894,7 +897,7 @@ ssize_t inet_io::read(void* data, size_t size, bool non_block)
 			char error[128];
 			strerror_r(errno, error, 128);
 			error("fcntl() failed " << errno << " " << color::bold << error << color::reset << color::red << ".");
-			this->sucess = false;
+			this->success = false;
 		}
 	}
 	
@@ -904,7 +907,7 @@ ssize_t inet_io::read(void* data, size_t size, bool non_block)
 		char error[128];
 		strerror_r(errno, error, 128);
 		error("read() failed " << errno << " " << color::bold << error << color::reset << color::red << ".");
-		this->sucess = false;
+		this->success = false;
 	}
 	
 	if (non_block)
@@ -914,7 +917,7 @@ ssize_t inet_io::read(void* data, size_t size, bool non_block)
 			char error[128];
 			strerror_r(errno, error, 128);
 			error("fcntl() failed " << errno << " " << color::bold << error << color::reset << color::red << ".");
-			this->sucess = false;
+			this->success = false;
 		}
 	}
 	
@@ -930,13 +933,13 @@ int inet_io::get_socket() const
 
 size_t inet_io::read(char* data, size_t size)
 {
-	this->sucess = true;
+	this->success = true;
 
 	int read = ::recv(this->socket, data, size, 0);
 	if (read <= 0)
 	{
 		error("read() failed with error: " << GetLastError());
-		this->sucess = false;
+		this->success = false;
 		return 0;
 	}
 
@@ -952,7 +955,7 @@ SOCKET inet_io::get_socket() const
 
 inet_io::operator bool() const
 {
-	return this->sucess;
+	return this->success;
 }
 
 template <typename type>
