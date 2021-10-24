@@ -2,8 +2,8 @@
 // Created by imper on 6/21/21.
 //
 
-#ifndef INET_COMM
-#define INET_COMM
+#ifndef INET_COMM_INET_COMM_
+#define INET_COMM_INET_COMM_
 
 #if defined(linux)
 
@@ -45,19 +45,19 @@
 
 #if defined(linux)
 
-#define log log_ << log_console::l_lock << log_console::l_localtime << l_location
-#define err err_ << log_console::l_lock << log_console::l_localtime << l_location
+#define LOG log << log_console::l_lock << log_console::l_localtime << l_location
+#define ERR err << log_console::l_lock << log_console::l_localtime << l_location
 
-#define error(message) (log << color::red << color::bold << "error" << color::reset << " : " << color::red << color::italic << message << color::reset << log_console::l_endent)
-#define fatal_error(message) error(message); throw std::runtime_error(message)
+#define ERROR(message) (LOG << color::red << color::bold << "ERROR" << color::reset << " : " << color::red << color::italic << message << color::reset << log_console::l_endent)
+#define FATAL_ERROR(message) ERROR(message); throw std::runtime_error(message)
 
 #else
 
-#define log std::cout
-#define err std::cerr
+#define LOG std::cout
+#define ERR std::cerr
 
-#define error(message) (err << "error" << " : " << message << "\n")
-#define fatal_error(message) error(message); throw std::runtime_error(message)
+#define ERROR(message) (ERR << "ERROR" << " : " << message << "\n")
+#define FATAL_ERROR(message) ERROR(message); throw std::runtime_error(message)
 
 typedef decltype(in_addr::S_un.S_addr) in_addr_t;
 typedef ADDRESS_FAMILY sa_family_t;
@@ -70,14 +70,14 @@ typedef ADDRESS_FAMILY sa_family_t;
 class suppress_signal
 {
 public:
-	explicit suppress_signal(int _sig) : _sig(_sig)
+	explicit suppress_signal(int _sig) : sig(_sig)
 	{
-		::signal(_sig, _sig_handle);
+		::signal(_sig, sig_handle);
 	}
 	
 	~suppress_signal()
 	{
-		::signal(this->_sig, SIG_DFL);
+		::signal(this->sig, SIG_DFL);
 	}
 	
 	static void enable_log(bool status = true);
@@ -85,34 +85,34 @@ public:
 	static void enable_err(bool status = true);
 
 private:
-	int _sig;
+	int sig;
 	
-	static void _sig_handle(int _sig);
+	static void sig_handle(int sig);
 	
-	static log_console log_;
-	static log_console err_;
+	static log_console log;
+	static log_console err;
 };
 
 // #definition-begin suppress_signal
 
-log_console suppress_signal::log_(stdout);
-log_console suppress_signal::err_(stderr);
+log_console suppress_signal::log(stdout);
+log_console suppress_signal::err(stderr);
 
-void suppress_signal::_sig_handle(int _sig)
+void suppress_signal::sig_handle(int sig)
 {
-	error(::strsignal(_sig));
+	ERROR(::strsignal(sig));
 }
 
 void suppress_signal::enable_log(bool status)
 {
-	if (status) log_ << log_console::on;
-	else log_ << log_console::off;
+	if (status) log << log_console::on;
+	else log << log_console::off;
 }
 
 void suppress_signal::enable_err(bool status)
 {
-	if (status) log_ << log_console::on;
-	else log_ << log_console::off;
+	if (status) log << log_console::on;
+	else log << log_console::off;
 }
 
 // #definition-end suppress_signal
@@ -147,6 +147,10 @@ public:
 	[[nodiscard]] sockaddr_in get_raw() const;
 	
 	void set_address(sa_family_t family, const char* address);
+	
+	operator sockaddr_in() const;
+	
+	operator const sockaddr_in&() const;
 
 private:
 	friend class server;
@@ -199,6 +203,16 @@ void inet_address::set_address(sa_family_t family, const char* address)
 {
 	inet_pton(family, address, &this->address.sin_addr.s_addr);
 	this->address.sin_family = family;
+}
+
+inet_address::operator sockaddr_in() const
+{
+	return this->get_raw();
+}
+
+inet_address::operator const sockaddr_in&() const
+{
+	return this->address;
 }
 
 // #definition-end inet_address
@@ -281,8 +295,8 @@ public:
 
 #if defined(linux)
 	
-	static log_console log_;
-	static log_console err_;
+	static log_console log;
+	static log_console err;
 
 #endif
 
@@ -319,60 +333,50 @@ int server::server_threads = 0;
 
 #if defined(linux)
 
-log_console     server::log_(stdout);
-log_console     server::err_(stderr);
+log_console     server::log(stdout);
+log_console     server::err(stderr);
 pthread_mutex_t server::mutex = PTHREAD_MUTEX_INITIALIZER;
 
 
 server::server(int max_clients, const inet_address& address, client_process_function process_function, void* extra) :
 		max_clients(max_clients), address(address), process_function(process_function), extra(extra)
 {
-	log << color::green << "socket init...\nserver address: " << color::yellow << address.get_address()
+	LOG << color::green << "socket init...\nserver address: " << color::yellow << address.get_address()
 		<< color::green << ";\nsocket family: " << address.get_family()
 		<< color::green << ";\nport = " << address.get_port()
 		<< color::green << ";\n\tmax connections accept = " << max_clients
 		<< color::green << ";" << color::reset << log_console::l_endent;
-	errno = 0;
 	socket = ::socket(AF_INET, SOCK_STREAM, 0);
 	if (socket < 0)
 	{
-		char error[128];
-		strerror_r(errno, error, 128);
-		error("socket() failed " << errno << " " << color::bold << error << color::reset << color::red << ". socket : " << socket);
+		ERROR("socket() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset
+								 << color::red << ". socket : " << socket);
 		return;
 	}
 	
-	errno = 0;
 	if (int ret = ::setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, (char*)(new int(1)), sizeof(int)); ret < 0)
 	{
-		char error[128];
-		strerror_r(errno, error, 128);
-		error("setsockopt() failed " << errno << " " << color::bold << error << color::reset);
+		ERROR("setsockopt() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno)
+									 << color::reset);
 		return;
 	}
 	
-	log << color::green << "binding..." << color::reset << log_console::l_endent;
-	errno = 0;
+	LOG << color::green << "binding..." << color::reset << log_console::l_endent;
 	if (int ret = ::bind(socket, (struct sockaddr*)&address.address, sizeof(address.address)); ret < 0)
 	{
-		char error[128];
-		strerror_r(errno, error, 128);
-		error("bind() failed " << errno << " " << color::bold << error << color::reset);
+		ERROR("bind() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset);
 		return;
 	}
 	
-	log << color::green << "success.\n" << color::reset
+	LOG << color::green << "success.\n" << color::reset
 		<< color::green << "listening socket = " << color::reset << socket << color::green << " ...\n" << color::reset
 		<< color::green << "listen..." << color::reset << log_console::l_endent;
-	errno = 0;
 	if (listen(socket, max_clients) < 0)
 	{
-		char error[128];
-		strerror_r(errno, error, 128);
-		error("listen() failed " << errno << " " << color::bold << error << color::reset);
+		ERROR("listen() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset);
 		return;
 	}
-	log << color::green << "success." << color::reset << log_console::l_endent;
+	LOG << color::green << "success." << color::reset << log_console::l_endent;
 }
 
 #else
@@ -380,56 +384,52 @@ server::server(int max_clients, const inet_address& address, client_process_func
 server::server(int max_clients, const inet_address& address, client_process_function process_function, void* extra) :
 		max_clients(max_clients), address(address), process_function(process_function), extra(extra)
 {
-	log << "winsock lib init...\n";
+	LOG << "winsock lib init...\n";
 
 	WSADATA wsa;
 
 	if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
 	{
-		error("WSAStartup() failed with error " << WSAGetLastError());
+		ERROR("WSAStartup() failed with ERROR " << WSAGetLastError());
 		return;
 	}
 
-	log << "done.\n";
+	LOG << "done.\n";
 
-	log << "socket init...\nserver address: " << address.get_address()
+	LOG << "socket init...\nserver address: " << address.get_address()
 		<< ";\nsocket family: " << address.get_family()
 		<< ";\nport = " << address.get_port()
 		<< ";\n\tmax connections accept = " << max_clients
 		<< ";\n";
-	errno = 0;
 	socket = ::socket(AF_INET, SOCK_STREAM, 0);
 	if (socket == INVALID_SOCKET)
 	{
-		error("socket() failed with error " << GetLastError() << ". socket : " << socket);
+		ERROR("socket() failed with ERROR " << GetLastError() << ". socket : " << socket);
 		return;
 	}
 	
-	errno = 0;
 	if (int ret = ::setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, (char*)(new int(1)), sizeof(int)); ret < 0)
 	{
-		error("setsockopt() failed with error" << GetLastError());
+		ERROR("setsockopt() failed with ERROR" << GetLastError());
 		return;
 	}
 	
-	log << "binding...\n";
-	errno = 0;
+	LOG << "binding...\n";
 	if (int ret = ::bind(socket, (struct sockaddr*)&address.address, sizeof(address.address)); ret < 0)
 	{
-		error("bind() failed with error " << GetLastError());
+		ERROR("bind() failed with ERROR " << GetLastError());
 		return;
 	}
 	
-	log << "success.\n"
+	LOG << "success.\n"
 		<< "listening socket = " << socket << " ...\n"
 		<< "listen...\n";
-	errno = 0;
 	if (listen(socket, max_clients) < 0)
 	{
-		error("listen() failed with error " << GetLastError());
+		ERROR("listen() failed with ERROR " << GetLastError());
 		return;
 	}
-	log << "success.\n";
+	LOG << "success.\n";
 }
 
 #endif
@@ -449,12 +449,9 @@ bool server::run(bool wait) const
 	
 	while (true)
 	{
-		errno = 0;
 		if (new_socket = ::accept(this->socket, (struct sockaddr*)&address, &addrlen); new_socket < 0)
 		{
-			char error[128];
-			strerror_r(errno, error, 128);
-			error("accept() failed " << errno << " " << color::bold << error << color::reset);
+			ERROR("accept() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset);
 			if (errno == EBADF || errno == EINVAL)
 			{
 				return false;
@@ -462,7 +459,7 @@ bool server::run(bool wait) const
 			break;
 		}
 		
-		log << color::green << "====== new connection ======\n socket = " << color::reset << new_socket
+		LOG << color::green << "====== new connection ======\n socket = " << color::reset << new_socket
 			<< color::green << "\n address = " << color::yellow << ::inet_ntoa(address.sin_addr)
 			<< color::green << "\n port = " << color::reset << ::ntohs(address.sin_port)
 			<< color::green << "\n\n============================" << color::reset << log_console::l_endent;
@@ -476,13 +473,13 @@ bool server::run(bool wait) const
 		dat->threads_count = &++threads_count;
 		dat->process_function = process_function;
 		
-		log << color::green << "running client processing thread..." << color::reset << log_console::l_endent;
+		LOG << color::green << "running client processing thread..." << color::reset << log_console::l_endent;
 		
 		pthread_t pthread;
 		pthread_create(&pthread, nullptr, process_client, (void*)dat);
 		::pthread_detach(pthread);
 		
-		log << color::green << "done." << color::reset << log_console::l_endent;
+		LOG << color::green << "done." << color::reset << log_console::l_endent;
 	}
 	
 	while (wait && threads_count > 0)
@@ -508,10 +505,9 @@ bool server::run(bool wait) const
 	
 	while (true)
 	{
-		errno = 0;
 		if (new_socket = ::accept(this->socket, (struct sockaddr*)&address, &addrlen); new_socket < 0)
 		{
-			error("accept() failed with error " << GetLastError());
+			ERROR("accept() failed with ERROR " << GetLastError());
 			if (errno == EBADF || errno == EINVAL)
 			{
 				return false;
@@ -519,7 +515,7 @@ bool server::run(bool wait) const
 			break;
 		}
 		
-		log << "====== new connection ======\n socket = " << new_socket
+		LOG << "====== new connection ======\n socket = " << new_socket
 			<< "\n address = " << ::inet_ntoa(address.sin_addr)
 			<< "\n port = " << ::ntohs(address.sin_port)
 			<< "\n\n============================\n";
@@ -533,11 +529,11 @@ bool server::run(bool wait) const
 		dat->threads_count            = &++threads_count;
 		dat->process_function         = process_function;
 		
-		log << "running client processing thread...\n";
+		LOG << "running client processing thread...\n";
 
 		CreateThread(nullptr, 0, process_client, (void*)dat, 0, 0);
 		
-		log << "done.\n";
+		LOG << "done.\n";
 	}
 	
 	while (wait && threads_count > 0)
@@ -573,14 +569,14 @@ void server::run_server_thread(bool wait_for_child_threads)
 	this->wait_for_child_threads = wait_for_child_threads;
 	++server::server_threads;
 #if defined(linux)
-	log << color::faint << color::yellow << "starting main server thread..." << log_console::l_endent;
+	LOG << color::faint << color::yellow << "starting main server thread..." << log_console::l_endent;
 	pthread_create(&this->main_thread, nullptr, server_thread, static_cast<void*>(const_cast<server*>(this)));
 	pthread_detach(this->main_thread);
-	log << color::faint << color::yellow << "done." << log_console::l_endent;
+	LOG << color::faint << color::yellow << "done." << log_console::l_endent;
 #else
-	log << "starting main server thread...\n";
+	LOG << "starting main server thread...\n";
 	this->main_thread = CreateThread(nullptr, 0, server_thread, static_cast<void*>(const_cast<server*>(this)), 0, 0);
-	log << "done.\n";
+	LOG << "done.\n";
 #endif
 }
 
@@ -602,11 +598,11 @@ void server::open_port_in_iptables(uint16_t port)
 {
 	if (!geteuid())
 	{
-		log << color::faint << color::green << "executing opening ports command..." << color::reset << log_console::l_endent;
+		LOG << color::faint << color::green << "executing opening ports command..." << color::reset << log_console::l_endent;
 		std::string cmd("sudo iptables -A ");
 		system((cmd + "INPUT -p tcp --dport " + std::to_string(port) + " -j ACCEPT").c_str());
 		system((cmd + "OUTPUT -p tcp --dport " + std::to_string(port) + " -j ACCEPT").c_str());
-		log << color::faint << color::green << "executed." << color::reset << log_console::l_endent;
+		LOG << color::faint << color::green << "executed." << color::reset << log_console::l_endent;
 	}
 }
 
@@ -614,11 +610,11 @@ void server::close_port_in_iptables(uint16_t port)
 {
 	if (!geteuid())
 	{
-		log << color::faint << color::green << "executing opening ports command..." << color::reset << log_console::l_endent;
+		LOG << color::faint << color::green << "executing opening ports command..." << color::reset << log_console::l_endent;
 		std::string cmd("sudo iptables -D ");
 		system((cmd + "INPUT -p tcp --dport " + std::to_string(port) + " -j ACCEPT").c_str());
 		system((cmd + "OUTPUT -p tcp --dport " + std::to_string(port) + " -j ACCEPT").c_str());
-		log << color::faint << color::green << "executed." << color::reset << log_console::l_endent;
+		LOG << color::faint << color::green << "executed." << color::reset << log_console::l_endent;
 	}
 }
 
@@ -645,9 +641,7 @@ std::vector<struct ifaddrs*>& server::list_all_network_interfaces()
 	
 	if (::getifaddrs(&ifaddr) == -1)
 	{
-		char error[128];
-		strerror_r(errno, error, 128);
-		error("getifaddrs() failed " << errno << " " << color::bold << error << color::reset << ".");
+		ERROR("getifaddrs() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << ".");
 		return *result;
 	}
 	
@@ -666,7 +660,7 @@ void* server::process_client(void* args)
 	pthread_mutex_lock(&mutex);
 	struct server_client_data& data = *static_cast<struct server_client_data*>(args);
 	int client_socket = data.socket;
-	log << color::green << "\nsocket : " << client_socket << log_console::l_endent;
+	LOG << color::green << "\nsocket : " << client_socket << log_console::l_endent;
 	if ((*data.is_client_processing_ptr)[client_socket])
 	{
 		return new bool(true);
@@ -674,10 +668,10 @@ void* server::process_client(void* args)
 	(*data.is_client_processing_ptr)[client_socket] = true;
 	pthread_mutex_unlock(&mutex);
 	
-	log << color::green << "processing client...\n\tthread_no = " << data.thread_id << color::green << ";" << color::reset << log_console::l_endent;
+	LOG << color::green << "processing client...\n\tthread_no = " << data.thread_id << color::green << ";" << color::reset << log_console::l_endent;
 	while (data.process_function(data.socket, data.address, data.serv))
 	{ }
-	log << color::faint << "job finished.\n\tthread_no = " << data.thread_id << ";" << color::reset << log_console::l_endent;
+	LOG << color::faint << "job finished.\n\tthread_no = " << data.thread_id << ";" << color::reset << log_console::l_endent;
 	return new bool(true);
 }
 
@@ -692,18 +686,18 @@ DWORD WINAPI server::process_client(void* args)
 {
 	struct server_client_data& data = *static_cast<struct server_client_data*>(args);
 	SOCKET client_socket = data.socket;
-	log << "\nsocket : " << client_socket << "\n";
+	LOG << "\nsocket : " << client_socket << "\n";
 	if ((*data.is_client_processing_ptr)[client_socket])
 	{
 		return 0;
 	}
 	(*data.is_client_processing_ptr)[client_socket] = true;
 
-	log << "processing client...\n\tthread_no = " << data.thread_id << ";\n";
+	LOG << "processing client...\n\tthread_no = " << data.thread_id << ";\n";
 	while (data.process_function(data.socket, data.address, data.serv))
 	{
 	}
-	log << "job finished.\n\tthread_no = " << data.thread_id << ";\n";
+	LOG << "job finished.\n\tthread_no = " << data.thread_id << ";\n";
 	return 0;
 }
 
@@ -787,8 +781,8 @@ public:
 
 #if defined(linux)
 	
-	static log_console log_;
-	static log_console err_;
+	static log_console log;
+	static log_console err;
 
 #endif
 
@@ -810,8 +804,8 @@ protected:
 // #definition-begin inet_io
 
 #if defined(linux)
-log_console inet_io::log_(stdout);
-log_console inet_io::err_(stderr);
+log_console inet_io::log(stdout);
+log_console inet_io::err(stderr);
 #endif
 
 #if defined(linux)
@@ -845,7 +839,7 @@ bool inet_io::write(const char* data, size_t size)
 	
 	for (size_t attempt = 0; wrote < size && attempt < max_attempts; ++attempt)
 	{
-		log << color::faint << color::green << "wrote only " << wrote << color::green << "bytes of data - trying to write rest." << color::reset
+		LOG << color::faint << color::green << "wrote only " << wrote << color::green << "bytes of data - trying to write rest." << color::reset
 			<< log_console::l_endent;
 		*reinterpret_cast<const char**>(&data) += wrote;
 		size -= wrote;
@@ -864,7 +858,7 @@ bool inet_io::write(const char* data, size_t size)
 	int wrote = send(this->socket, data, size, 0);
 	if (wrote == SOCKET_ERROR)
 	{
-		error("send() failed with error: " << WSAGetLastError());
+		ERROR("send() failed with ERROR: " << WSAGetLastError());
 		goto fail;
 	}
 #endif
@@ -875,9 +869,7 @@ bool inet_io::write(const char* data, size_t size)
 
 fail:
 #if defined(linux)
-	char error[128];
-	strerror_r(errno, error, 128);
-	error("write() failed " << errno << " " << color::bold << error << color::reset << color::red << ".");
+	ERROR("write() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red << ".");
 #endif
 	this->success = false;
 	return false;
@@ -894,9 +886,8 @@ ssize_t inet_io::read(void* data, size_t size, bool non_block)
 		flags = fcntl(this->socket, F_GETFL, 0);
 		if (::fcntl(this->socket, F_SETFL, flags | O_NONBLOCK) < 0)
 		{
-			char error[128];
-			strerror_r(errno, error, 128);
-			error("fcntl() failed " << errno << " " << color::bold << error << color::reset << color::red << ".");
+			ERROR("fcntl() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
+									<< ".");
 			this->success = false;
 		}
 	}
@@ -904,9 +895,7 @@ ssize_t inet_io::read(void* data, size_t size, bool non_block)
 	ssize_t read = ::read(this->socket, data, size);
 	if (read <= 0)
 	{
-		char error[128];
-		strerror_r(errno, error, 128);
-		error("read() failed " << errno << " " << color::bold << error << color::reset << color::red << ".");
+		ERROR("read() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red << ".");
 		this->success = false;
 	}
 	
@@ -914,9 +903,8 @@ ssize_t inet_io::read(void* data, size_t size, bool non_block)
 	{
 		if (::fcntl(this->socket, F_SETFL, flags))
 		{
-			char error[128];
-			strerror_r(errno, error, 128);
-			error("fcntl() failed " << errno << " " << color::bold << error << color::reset << color::red << ".");
+			ERROR("fcntl() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
+									<< ".");
 			this->success = false;
 		}
 	}
@@ -938,7 +926,7 @@ size_t inet_io::read(char* data, size_t size)
 	int read = ::recv(this->socket, data, size, 0);
 	if (read <= 0)
 	{
-		error("read() failed with error: " << GetLastError());
+		ERROR("read() failed with ERROR: " << GetLastError());
 		this->success = false;
 		return 0;
 	}
@@ -1034,62 +1022,59 @@ private:
 client::client(const inet_address& server_address) : server_address(server_address)
 {
 #if defined(linux)
-	log << color::green << "socket init...\nserver address: " << color::yellow << this->server_address.get_address()
+	LOG << color::green << "socket init...\nserver address: " << color::yellow << this->server_address.get_address()
 		<< color::green << ";\nsocket family: " << this->server_address.get_family()
 		<< color::green << ";\nport = " << this->server_address.get_port() << color::green << ";"
 		<< color::reset << log_console::l_endent;
 	
-	errno = 0;
+	
 	this->socket = ::socket(AF_INET, SOCK_STREAM, 0);
 	if (this->socket < 0)
 	{
-		char error[128];
-		strerror_r(errno, error, 128);
-		error("socket init failed " << errno << " " << color::bold << error << color::reset << color::red << ". socket : " << socket);
+		ERROR("socket init failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
+									<< ". socket : " << socket);
 		return;
 	}
 	
-	log << color::green << "success." << color::reset << log_console::l_endent;
+	LOG << color::green << "success." << color::reset << log_console::l_endent;
 #else
-	log << "socket init...\nserver address: " << this->server_address.get_address()
+	LOG << "socket init...\nserver address: " << this->server_address.get_address()
 		<< ";\nsocket family: " << this->server_address.get_family()
 		<< ";\nport = " << this->server_address.get_port() << ";\n";
 	this->socket = ::socket(AF_INET, SOCK_STREAM, 0);
 	if (this->socket == INVALID_SOCKET)
 	{
-		error("socket init failed with error: " << GetLastError());
+		ERROR("socket init failed with ERROR: " << GetLastError());
 		return;
 	}
 
-	log << "success.\n";
+	LOG << "success.\n";
 #endif
 }
 
 bool client::connect()
 {
 #if defined(linux)
-	log << color::green << "connecting..." << color::reset << log_console::l_endent;
-	errno = 0;
+	LOG << color::green << "connecting..." << color::reset << log_console::l_endent;
+	
 	if (::connect(socket, (struct sockaddr*)&this->server_address, sizeof(this->server_address)) < 0)
 	{
-		char error[128];
-		strerror_r(errno, error, 128);
-		error("connection failed " << errno << " " << color::bold << error << color::reset);
+		ERROR("connection failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset);
 		return false;
 	}
 	
-	log << color::green << "success." << color::reset << log_console::l_endent;
+	LOG << color::green << "success." << color::reset << log_console::l_endent;
 #else
-	log << "connecting...\n";
+	LOG << "connecting...\n";
 	if (::connect(socket, (struct sockaddr*)&this->server_address, sizeof(this->server_address)) == SOCKET_ERROR)
 	{
-		error("connect() failed with error: " << GetLastError());
+		ERROR("connect() failed with ERROR: " << GetLastError());
 		closesocket(socket);
 		socket = INVALID_SOCKET;
 		return false;
 	}
 
-	log << "success.\n";
+	LOG << "success.\n";
 #endif
 	return true;
 }
@@ -1119,4 +1104,4 @@ client::~client()
 
 // #definition-end client
 
-#endif // INET_COMM
+#endif // INET_COMM_INET_COMM_
