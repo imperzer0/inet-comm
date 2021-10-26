@@ -17,6 +17,8 @@
 #include <sys/fcntl.h>
 #include <log-console>
 #include <ifaddrs.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
 
 #else
 
@@ -45,11 +47,121 @@
 
 #if defined(linux)
 
-#define log log_ << log_console::l_lock << log_console::l_localtime << l_location
-#define err err_ << log_console::l_lock << log_console::l_localtime << l_location
+#define log (log_ << log_console::l_lock << log_console::l_localtime << l_location)
+#define err (err_ << log_console::l_lock << log_console::l_localtime << l_location)
 
-#define error(message) (log << color::red << color::bold << "error" << color::reset << " : " << color::red << color::italic << message << color::reset << log_console::l_endent)
+#define error(message) (err << color::red << color::bold << "error" << color::reset << " : " << color::red << color::italic << message << color::reset << log_console::l_endent)
 #define fatal_error(message) error(message); throw std::runtime_error(message)
+#define print(stream, message) ((stream) << log_console::l_lock << log_console::l_localtime << l_location << color::yellow << color::italic << message << color::reset << log_console::l_unlock)
+#define println(stream, message) ((stream) << log_console::l_lock << log_console::l_localtime << l_location << color::yellow << color::italic << message << color::reset << log_console::l_endent)
+
+#define default_error_handler [](const char* str, size_t size, void* u) { *new log_console(stderr) << log_console::l_localtime << l_location << color::red << str << color::reset << log_console::l_endent; return 0; }
+
+
+inline static SSL_CTX* init_server_ctx(const SSL_METHOD* method = DTLSv1_2_server_method())
+{
+	SSL_CTX* ctx;
+	
+	OpenSSL_add_all_algorithms();  /* load & register all cryptos, etc. */
+	SSL_load_error_strings();   /* load all error messages */
+	
+	ctx = SSL_CTX_new(method);   /* create new context from method */
+	if (ctx == nullptr)
+	{
+		ERR_print_errors_cb(
+				default_error_handler, nullptr
+		);
+		return ctx;
+	}
+	
+	SSL_CTX_set_cipher_list(ctx, "ALL:eNULL");
+	
+	return ctx;
+}
+
+inline static SSL_CTX* init_client_ctx(const SSL_METHOD* method = DTLSv1_2_client_method())
+{
+	SSL_CTX* ctx;
+	
+	OpenSSL_add_all_algorithms();  /* load & register all cryptos, etc. */
+	SSL_load_error_strings();   /* load all error messages */
+	
+	ctx = SSL_CTX_new(method);   /* create new context from method */
+	if (ctx == nullptr)
+	{
+		ERR_print_errors_cb(
+				default_error_handler, nullptr
+		);
+		return ctx;
+	}
+	
+	SSL_CTX_set_cipher_list(ctx, "ALL:eNULL");
+	
+	return ctx;
+}
+
+inline static bool load_certificates(SSL_CTX* ctx, const char* cert_file, const char* key_file)
+{
+	///New lines
+	if (SSL_CTX_load_verify_locations(ctx, cert_file, key_file) != 1)
+		ERR_print_errors_cb(default_error_handler, nullptr);
+	
+	if (SSL_CTX_set_default_verify_paths(ctx) != 1)
+		ERR_print_errors_cb(default_error_handler, nullptr);
+	///End new lines
+	
+	/** set the local certificate from CertFile **/
+	if (SSL_CTX_use_certificate_file(ctx, cert_file, SSL_FILETYPE_PEM) <= 0)
+	{
+		ERR_print_errors_cb(default_error_handler, nullptr);
+		return false;
+	}
+	
+	/** set the private key from KeyFile (may be the same as CertFile) **/
+	SSL_CTX_set_default_passwd_cb_userdata(ctx, (void*)"1488");
+	if (SSL_CTX_use_PrivateKey_file(ctx, key_file, SSL_FILETYPE_PEM) <= 0)
+	{
+		ERR_print_errors_cb(default_error_handler, nullptr);
+		return false;
+	}
+	
+	/** verify private key **/
+	if (!SSL_CTX_check_private_key(ctx))
+	{
+		*new log_console(stderr) << log_console::l_localtime << l_location << color::red << "Private key does not match the public certificate"
+								 << color::reset << log_console::l_endent;
+		return false;
+	}
+	
+	///New lines - Force the client-side have a certificate
+	//SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
+	//SSL_CTX_set_verify_depth(ctx, 4);
+	///End new lines
+	return true;
+}
+
+inline static void print_cert_info(SSL* ssl, log_console& stream)
+{
+	X509* cert;
+	char* line;
+	
+	cert = SSL_get_peer_certificate(ssl); /* Get certificates (if available) */
+	if (cert)
+	{
+		println(stream, "Server certificates:");
+		line = X509_NAME_oneline(X509_get_subject_name(cert), nullptr, 0);
+		println(stream, "Subject: " << color::blue << line);
+		delete[] line;
+		line = X509_NAME_oneline(X509_get_issuer_name(cert), nullptr, 0);
+		print(stream, "Issuer: " << color::blue << line);
+		delete[] line;
+		X509_free(cert);
+	}
+	else
+	{
+		println(stream, "No certificates.");
+	}
+}
 
 #else
 
@@ -70,24 +182,24 @@ typedef ADDRESS_FAMILY sa_family_t;
 class suppress_signal
 {
 public:
-	explicit suppress_signal(int _sig) : sig(_sig)
+	inline explicit suppress_signal(int _sig) : sig(_sig)
 	{
 		::signal(_sig, sig_handle);
 	}
 	
-	~suppress_signal()
+	inline ~suppress_signal()
 	{
 		::signal(this->sig, SIG_DFL);
 	}
 	
-	static void enable_log(bool status = true);
+	inline static void enable_log(bool status);
 	
-	static void enable_err(bool status = true);
+	inline static void enable_err(bool status);
 
 private:
 	int sig;
 	
-	static void sig_handle(int sig);
+	inline static void sig_handle(int sig);
 	
 	static log_console log_;
 	static log_console err_;
@@ -98,21 +210,21 @@ private:
 log_console suppress_signal::log_(stdout);
 log_console suppress_signal::err_(stderr);
 
-void suppress_signal::sig_handle(int sig)
+inline void suppress_signal::sig_handle(int sig)
 {
-	error(::strsignal(sig));
+	error(::sigabbrev_np(sig) << " " << color::bold << ::sigdescr_np(sig));
 }
 
-void suppress_signal::enable_log(bool status)
+inline void suppress_signal::enable_log(bool status = true)
 {
-	if (status) log << log_console::on;
-	else log << log_console::off;
+	if (status) log_ << log_console::on;
+	else log_ << log_console::off;
 }
 
-void suppress_signal::enable_err(bool status)
+inline void suppress_signal::enable_err(bool status = true)
 {
-	if (status) log << log_console::on;
-	else log << log_console::off;
+	if (status) err_ << log_console::on;
+	else err_ << log_console::off;
 }
 
 // #definition-end suppress_signal
@@ -120,7 +232,7 @@ void suppress_signal::enable_err(bool status)
 
 class server;
 
-in_addr_t inet_pton(sa_family_t af, const char* address)
+inline in_addr_t inet_pton(sa_family_t af, const char* address)
 {
 	in_addr_t ret{0};
 	inet_pton(af, address, &ret);
@@ -130,27 +242,29 @@ in_addr_t inet_pton(sa_family_t af, const char* address)
 class inet_address
 {
 public:
-	inet_address() = default;
+	inline inet_address() = default;
 	
-	inet_address(const sockaddr_in& address);
+	inline inet_address(const sockaddr_in& address);
 	
-	inet_address(sa_family_t family, uint16_t port, in_addr_t address);
+	inline inet_address(sa_family_t family, uint16_t port, in_addr_t address);
 	
-	inet_address(sa_family_t family, uint16_t port, const char* address);
+	inline inet_address(sa_family_t family, uint16_t port, const char* address);
 	
-	[[nodiscard]] const char* get_address() const;
+	[[nodiscard]] inline const char* get_address() const;
 	
-	[[nodiscard]] uint16_t get_port() const;
+	[[nodiscard]] inline uint16_t get_port() const;
 	
-	[[nodiscard]] sa_family_t get_family() const;
+	[[nodiscard]] inline sa_family_t get_family() const;
 	
-	[[nodiscard]] sockaddr_in get_raw() const;
+	[[nodiscard]] inline sockaddr_in get_raw() const;
 	
-	void set_address(sa_family_t family, const char* address);
+	inline void set_address(sa_family_t family, const char* address);
 	
-	operator sockaddr_in() const;
+	inline void set_port(uint16_t port);
 	
-	operator const sockaddr_in&() const;
+	inline operator sockaddr_in() const;
+	
+	inline operator const sockaddr_in&() const;
 
 private:
 	friend class server;
@@ -162,10 +276,10 @@ private:
 
 // #definition-begin inet_address
 
-inet_address::inet_address(const sockaddr_in& address) : address(address)
+inline inet_address::inet_address(const sockaddr_in& address) : address(address)
 { }
 
-inet_address::inet_address(sa_family_t family, uint16_t port, in_addr_t address) : inet_address(
+inline inet_address::inet_address(sa_family_t family, uint16_t port, in_addr_t address) : inet_address(
 		*new sockaddr_in{
 				family, ::htons(port),
 #if defined(linux)
@@ -176,41 +290,46 @@ inet_address::inet_address(sa_family_t family, uint16_t port, in_addr_t address)
 )
 { }
 
-inet_address::inet_address(sa_family_t family, uint16_t port, const char* address) : inet_address(family, port, inet_pton(family, address))
+inline inet_address::inet_address(sa_family_t family, uint16_t port, const char* address) : inet_address(family, port, inet_pton(family, address))
 { }
 
-const char* inet_address::get_address() const
+inline const char* inet_address::get_address() const
 {
 	return inet_ntoa(this->address.sin_addr);
 }
 
-uint16_t inet_address::get_port() const
+inline uint16_t inet_address::get_port() const
 {
 	return ntohs(this->address.sin_port);
 }
 
-sa_family_t inet_address::get_family() const
+inline sa_family_t inet_address::get_family() const
 {
 	return ntohs(this->address.sin_port);
 }
 
-sockaddr_in inet_address::get_raw() const
+inline sockaddr_in inet_address::get_raw() const
 {
 	return this->address;
 }
 
-void inet_address::set_address(sa_family_t family, const char* address)
+inline void inet_address::set_address(sa_family_t family, const char* address)
 {
 	inet_pton(family, address, &this->address.sin_addr.s_addr);
 	this->address.sin_family = family;
 }
 
-inet_address::operator sockaddr_in() const
+void inet_address::set_port(uint16_t port)
+{
+	this->address.sin_port = ::htons(port);
+}
+
+inline inet_address::operator sockaddr_in() const
 {
 	return this->get_raw();
 }
 
-inet_address::operator const sockaddr_in&() const
+inline inet_address::operator const sockaddr_in&() const
 {
 	return this->address;
 }
@@ -220,7 +339,7 @@ inet_address::operator const sockaddr_in&() const
 
 #if defined (linux)
 
-typedef bool (* client_process_function)(int socket, const inet_address& address, server* server);
+typedef bool (* client_process_function)(int socket, SSL* ssl, const inet_address& address, server* server);
 
 #else
 
@@ -233,6 +352,7 @@ struct server_client_data
 #if defined(linux)
 	int socket;
 	std::map<int, bool>* is_client_processing_ptr;
+	SSL* ssl;
 #else
 	SOCKET socket;
 	std::map<SOCKET, bool>* is_client_processing_ptr;
@@ -247,33 +367,34 @@ struct server_client_data
 class server
 {
 public:
-	server(int max_clients, const inet_address& address, client_process_function process_function, void* extra = nullptr);
+	inline server(int max_clients, const inet_address& address, client_process_function process_function, void* extra, const std::string& cert_file,
+				  const std::string& key_file);
 	
-	[[nodiscard]] bool run(bool wait = false) const;
+	[[nodiscard]] inline bool run(bool wait);
 
 #if defined(linux)
 	
-	static void* server_thread(void* args);
+	inline static void* server_thread(void* args);
 
 #else
 	
-	static DWORD WINAPI server_thread(void* args);
+	inline static DWORD WINAPI server_thread(void* args);
 
 #endif
 	
-	void run_server_thread(bool wait_for_child_threads = false);
+	inline void run_server_thread(bool wait_for_child_threads);
 	
-	static void wait_for_all_servers();
+	inline static void wait_for_all_servers();
 
 #if defined(linux)
 	
-	static void open_port_in_iptables(uint16_t port);
+	inline static void open_port_in_iptables(uint16_t port);
 	
-	static void close_port_in_iptables(uint16_t port);
+	inline static void close_port_in_iptables(uint16_t port);
 	
-	static void get_machine_ip(struct ifreq& result, const char* interface_name);
+	inline static void get_machine_ip(struct ifreq& result, const char* interface_name);
 	
-	static std::vector<struct ifaddrs*>& list_all_network_interfaces();
+	inline static std::vector<struct ifaddrs*>& list_all_network_interfaces();
 	
 	[[nodiscard]] int get_socket() const;
 
@@ -283,13 +404,17 @@ public:
 
 #endif
 	
-	[[nodiscard]] int get_max_clients() const;
+	[[nodiscard]] inline int get_max_clients() const;
 	
-	[[nodiscard]] const inet_address& get_address() const;
+	[[nodiscard]] inline const inet_address& get_address() const;
 	
-	[[nodiscard]] client_process_function get_process_function() const;
+	[[nodiscard]] inline client_process_function get_process_function() const;
 	
-	~server();
+	[[nodiscard]] inline const std::string& get_cert_file() const;
+	
+	[[nodiscard]] inline const std::string& get_key_file() const;
+	
+	inline ~server();
 	
 	void* extra;
 
@@ -303,14 +428,15 @@ public:
 private:
 #if defined(linux)
 	
-	static void* process_client(void* args);
+	inline static void* process_client(void* args);
 	
 	pthread_t main_thread = 0;
 	int socket;
+	SSL_CTX* ctx = nullptr;
 
 #else
 	
-	static DWORD WINAPI process_client(void* args);
+	inline static DWORD WINAPI process_client(void* args);
 	
 	SOCKET socket;
 	HANDLE main_thread = nullptr;
@@ -323,6 +449,8 @@ private:
 	client_process_function process_function;
 #if defined(linux)
 	static pthread_mutex_t mutex;
+	std::string cert_file;
+	std::string key_file;
 #endif
 	static int server_threads;
 };
@@ -338,8 +466,9 @@ log_console     server::err_(stderr);
 pthread_mutex_t server::mutex = PTHREAD_MUTEX_INITIALIZER;
 
 
-server::server(int max_clients, const inet_address& address, client_process_function process_function, void* extra) :
-		max_clients(max_clients), address(address), process_function(process_function), extra(extra)
+inline server::server(int max_clients, const inet_address& address, client_process_function process_function, void* extra = nullptr,
+					  const std::string& cert_file = "", const std::string& key_file = "") :
+		max_clients(max_clients), address(address), process_function(process_function), extra(extra), cert_file(cert_file), key_file(key_file)
 {
 	log << color::green << "socket init...\nserver address: " << color::yellow << address.get_address()
 		<< color::green << ";\nsocket family: " << address.get_family()
@@ -376,12 +505,25 @@ server::server(int max_clients, const inet_address& address, client_process_func
 		error("listen() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset);
 		return;
 	}
+	
+	if (!this->cert_file.empty() && !this->key_file.empty())
+	{
+		log << color::green << "initializing ctx..." << color::reset << log_console::l_endent;
+		this->ctx = init_server_ctx();
+		
+		log << color::green << "loading certificates..." << color::reset << log_console::l_endent;
+		if (!load_certificates(this->ctx, this->cert_file.c_str(), this->key_file.c_str()))
+		{
+			error("load_certificates() returned " << false);
+		}
+	}
+	
 	log << color::green << "success." << color::reset << log_console::l_endent;
 }
 
 #else
 
-server::server(int max_clients, const inet_address& address, client_process_function process_function, void* extra) :
+inline server::server(int max_clients, const inet_address& address, client_process_function process_function, void* extra) :
 		max_clients(max_clients), address(address), process_function(process_function), extra(extra)
 {
 	log << "winsock lib init...\n";
@@ -436,7 +578,7 @@ server::server(int max_clients, const inet_address& address, client_process_func
 
 #if defined(linux)
 
-bool server::run(bool wait) const
+inline bool server::run(bool wait = false)
 {
 	int threads_count = 0, thread_id = 0;
 	
@@ -464,8 +606,37 @@ bool server::run(bool wait) const
 			<< color::green << "\n port = " << color::reset << ::ntohs(address.sin_port)
 			<< color::green << "\n\n============================" << color::reset << log_console::l_endent;
 		
+		SSL* ssl = nullptr;
+		
+		if (this->ctx)
+		{
+			ssl = SSL_new(ctx); /** get new SSL state with context **/
+			if (!ssl)
+			{
+				error("SSL_new() returned " << color::italic << color::purple << "nullptr");
+			}
+			
+			if (!SSL_set_fd(ssl, new_socket)) /** set connection socket to SSL state **/
+			{
+				ERR_print_errors_cb(default_error_handler, nullptr);
+			}
+			
+			if (ssl)
+			{
+				if (SSL_accept(ssl) <= 0)
+				{
+					error("SSL_accept() failed");
+					ERR_print_errors_cb(default_error_handler, nullptr);
+					ssl = nullptr;
+				}
+			}
+			
+			print_cert_info(ssl, server::log_);
+		}
+		
 		auto* dat = new server_client_data{ };
 		dat->socket = new_socket;
+		dat->ssl = ssl;
 		dat->serv = const_cast<server*>(this);
 		dat->address = inet_address(address);
 		dat->is_client_processing_ptr = &is_client_processing;
@@ -492,7 +663,7 @@ bool server::run(bool wait) const
 
 #else
 
-bool server::run(bool wait) const
+inline bool server::run(bool wait) const
 {
 	int threads_count          = 0, thread_id = 0;
 	
@@ -548,9 +719,9 @@ bool server::run(bool wait) const
 
 #if defined(linux)
 
-void* server::server_thread(void* args)
+inline void* server::server_thread(void* args)
 #else
-DWORD WINAPI server::server_thread(void* args)
+inline DWORD WINAPI server::server_thread(void* args)
 #endif
 {
 	auto* server = static_cast<class server*>(args);
@@ -564,7 +735,7 @@ DWORD WINAPI server::server_thread(void* args)
 #endif
 }
 
-void server::run_server_thread(bool wait_for_child_threads)
+inline void server::run_server_thread(bool wait_for_child_threads = false)
 {
 	this->wait_for_child_threads = wait_for_child_threads;
 	++server::server_threads;
@@ -594,7 +765,7 @@ inline void server::wait_for_all_servers()
 
 #if defined(linux)
 
-void server::open_port_in_iptables(uint16_t port)
+inline void server::open_port_in_iptables(uint16_t port)
 {
 	if (!geteuid())
 	{
@@ -606,7 +777,7 @@ void server::open_port_in_iptables(uint16_t port)
 	}
 }
 
-void server::close_port_in_iptables(uint16_t port)
+inline void server::close_port_in_iptables(uint16_t port)
 {
 	if (!geteuid())
 	{
@@ -633,7 +804,7 @@ void server::get_machine_ip(struct ifreq& result, const char* interface_name)
 	::close(fd);
 }
 
-std::vector<struct ifaddrs*>& server::list_all_network_interfaces()
+inline std::vector<struct ifaddrs*>& server::list_all_network_interfaces()
 {
 	auto* result = new std::remove_cvref_t<decltype(list_all_network_interfaces())>();
 	
@@ -655,7 +826,7 @@ std::vector<struct ifaddrs*>& server::list_all_network_interfaces()
 	return *result;
 }
 
-void* server::process_client(void* args)
+inline void* server::process_client(void* args)
 {
 	pthread_mutex_lock(&mutex);
 	struct server_client_data& data = *static_cast<struct server_client_data*>(args);
@@ -663,26 +834,30 @@ void* server::process_client(void* args)
 	log << color::green << "\nsocket : " << client_socket << log_console::l_endent;
 	if ((*data.is_client_processing_ptr)[client_socket])
 	{
-		return new bool(true);
+		return nullptr;
 	}
 	(*data.is_client_processing_ptr)[client_socket] = true;
 	pthread_mutex_unlock(&mutex);
 	
 	log << color::green << "processing client...\n\tthread_no = " << data.thread_id << color::green << ";" << color::reset << log_console::l_endent;
-	while (data.process_function(data.socket, data.address, data.serv))
+	while (data.process_function(data.socket, data.ssl, data.address, data.serv))
 	{ }
+	log << color::green << "SSL_free()..." << color::reset << log_console::l_endent;
+	SSL_free(data.ssl);
 	log << color::faint << "job finished.\n\tthread_no = " << data.thread_id << ";" << color::reset << log_console::l_endent;
-	return new bool(true);
+	(*data.is_client_processing_ptr)[client_socket] = false;
+	--*data.threads_count;
+	return nullptr;
 }
 
-int server::get_socket() const
+inline int server::get_socket() const
 {
 	return socket;
 }
 
 #else
 
-DWORD WINAPI server::process_client(void* args)
+inline DWORD WINAPI server::process_client(void* args)
 {
 	struct server_client_data& data = *static_cast<struct server_client_data*>(args);
 	SOCKET client_socket = data.socket;
@@ -701,33 +876,44 @@ DWORD WINAPI server::process_client(void* args)
 	return 0;
 }
 
-SOCKET server::get_socket() const
+inline SOCKET server::get_socket() const
 {
 	return socket;
 }
 
 #endif
 
-int server::get_max_clients() const
+inline int server::get_max_clients() const
 {
 	return max_clients;
 }
 
-const inet_address& server::get_address() const
+inline const inet_address& server::get_address() const
 {
 	return this->address;
 }
 
-client_process_function server::get_process_function() const
+inline client_process_function server::get_process_function() const
 {
 	return process_function;
 }
 
-server::~server()
+inline const std::string& server::get_cert_file() const
+{
+	return cert_file;
+}
+
+inline const std::string& server::get_key_file() const
+{
+	return key_file;
+}
+
+inline server::~server()
 {
 #if defined(linux)
 	pthread_kill(this->main_thread, 0);
 	::close(this->socket);
+	SSL_CTX_free(this->ctx);
 #else
 	TerminateThread(this->main_thread, 0);
 	closesocket(this->socket);
@@ -740,40 +926,42 @@ server::~server()
 class inet_io
 {
 public:
-	inet_io() = default;
-
 #if defined(linux)
 	
-	explicit inet_io(int socket);
+	inline explicit inet_io(int socket);
+	
+	inline explicit inet_io(SSL* ssl);
 
 #else
 	
-	explicit inet_io(SOCKET socket);
+	inline explicit inet_io(SOCKET socket);
 
 #endif
 
 #if defined(linux)
 	
 	template <size_t max_attempts = 0>
-	bool write(const void* data, size_t size);
+	inline bool write(const void* data, size_t size);
 
 #else
 	
-	bool write(const char* data, size_t size);
+	inline bool write(const char* data, size_t size);
 
 #endif
 
 #if defined(linux)
 	
-	ssize_t read(void* data, size_t size, bool non_block = false);
+	inline ssize_t read(void* data, size_t size, bool non_block);
 	
-	[[nodiscard]] int get_socket() const;
+	[[nodiscard]] inline int get_socket() const;
+	
+	[[nodiscard]] inline SSL* get_ssl() const;
 
 #else
 	
-	size_t read(char* data, size_t size);
+	inline size_t read(char* data, size_t size);
 
-	[[nodiscard]] SOCKET get_socket() const;
+	[[nodiscard]] inline SOCKET get_socket() const;
 
 #endif
 	
@@ -795,6 +983,7 @@ protected:
 
 #if defined(linux)
 	int socket;
+	SSL* ssl;
 #else
 	SOCKET socket;
 #endif
@@ -810,12 +999,15 @@ log_console inet_io::err_(stderr);
 
 #if defined(linux)
 
-inet_io::inet_io(int socket) : socket(socket)
+inline inet_io::inet_io(int socket) : socket(socket), ssl(nullptr)
+{ }
+
+inline inet_io::inet_io(SSL* ssl) : socket(ssl ? SSL_get_fd(ssl) : -1), ssl(ssl)
 { }
 
 #else
 
-inet_io::inet_io(SOCKET socket) : socket(socket)
+inline inet_io::inet_io(SOCKET socket) : socket(socket)
 { }
 
 #endif
@@ -823,7 +1015,7 @@ inet_io::inet_io(SOCKET socket) : socket(socket)
 #if defined(linux)
 
 template <size_t max_attempts>
-bool inet_io::write(const void* data, size_t size)
+inline bool inet_io::write(const void* data, size_t size)
 #else
 bool inet_io::write(const char* data, size_t size)
 #endif
@@ -831,7 +1023,18 @@ bool inet_io::write(const char* data, size_t size)
 	this->success = true;
 
 #if defined(linux)
-	ssize_t wrote = ::write(this->socket, data, size);
+	ssize_t wrote;
+	if (this->ssl)
+	{
+		wrote = SSL_write(this->ssl, data, size);
+		if (!wrote)
+			ERR_print_errors_cb(default_error_handler, nullptr);
+	}
+	else
+	{
+		wrote = ::write(this->socket, data, size);
+	}
+	
 	if (wrote < 0)
 	{
 		goto fail;
@@ -843,14 +1046,18 @@ bool inet_io::write(const char* data, size_t size)
 			<< log_console::l_endent;
 		*reinterpret_cast<const char**>(&data) += wrote;
 		size -= wrote;
-		wrote = ::write(this->socket, data, size);
+		if (this->ssl)
+			wrote = SSL_write(this->ssl, data, size);
+		else
+			wrote = ::write(this->socket, data, size);
+		
 		if (wrote < 0)
 		{
 			goto fail;
 		}
 	}
 	
-	if (!wrote)
+	if (wrote <= 0)
 	{
 		goto fail;
 	}
@@ -869,7 +1076,10 @@ bool inet_io::write(const char* data, size_t size)
 
 fail:
 #if defined(linux)
-	error("write() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red << ".");
+	if (this->ssl)
+		ERR_print_errors_cb(default_error_handler, nullptr);
+	else
+		error("write() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red << ".");
 #endif
 	this->success = false;
 	return false;
@@ -877,7 +1087,7 @@ fail:
 
 #if defined(linux)
 
-ssize_t inet_io::read(void* data, size_t size, bool non_block)
+inline ssize_t inet_io::read(void* data, size_t size, bool non_block = false)
 {
 	this->success = true;
 	int flags;
@@ -886,16 +1096,25 @@ ssize_t inet_io::read(void* data, size_t size, bool non_block)
 		flags = fcntl(this->socket, F_GETFL, 0);
 		if (::fcntl(this->socket, F_SETFL, flags | O_NONBLOCK) < 0)
 		{
-			error("fcntl() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
-									<< ".");
+			error("fcntl() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset
+									<< color::red << ".");
 			this->success = false;
 		}
 	}
 	
-	ssize_t read = ::read(this->socket, data, size);
+	ssize_t read;
+	if (this->ssl)
+		read = SSL_read(this->ssl, data, size);
+	else
+		read = ::read(this->socket, data, size);
+	
 	if (read <= 0)
 	{
-		error("read() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red << ".");
+		if (this->ssl)
+			ERR_print_errors_cb(default_error_handler, nullptr);
+		else
+			error("read() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset
+								   << color::red << ".");
 		this->success = false;
 	}
 	
@@ -903,8 +1122,8 @@ ssize_t inet_io::read(void* data, size_t size, bool non_block)
 	{
 		if (::fcntl(this->socket, F_SETFL, flags))
 		{
-			error("fcntl() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
-									<< ".");
+			error("fcntl() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset
+									<< color::red << ".");
 			this->success = false;
 		}
 	}
@@ -912,14 +1131,19 @@ ssize_t inet_io::read(void* data, size_t size, bool non_block)
 	return read;
 }
 
-int inet_io::get_socket() const
+inline int inet_io::get_socket() const
 {
 	return socket;
 }
 
+inline SSL* inet_io::get_ssl() const
+{
+	return this->ssl;
+}
+
 #else
 
-size_t inet_io::read(char* data, size_t size)
+inline size_t inet_io::read(char* data, size_t size)
 {
 	this->success = true;
 
@@ -934,14 +1158,14 @@ size_t inet_io::read(char* data, size_t size)
 	return read;
 }
 
-SOCKET inet_io::get_socket() const
+inline SOCKET inet_io::get_socket() const
 {
 	return socket;
 }
 
 #endif
 
-inet_io::operator bool() const
+inline inet_io::operator bool() const
 {
 	return this->success;
 }
@@ -975,7 +1199,7 @@ inline inet_io& operator<<(inet_io& io, type data)
 	}
 	else if constexpr(std::is_arithmetic_v<type>)
 	{
-		io.write((const char*)&data, sizeof(data));
+		io.write(static_cast<const void*>(&data), sizeof(data));
 	}
 	else
 	{
@@ -989,7 +1213,7 @@ inline inet_io& operator>>(inet_io& io, type& data)
 {
 	if constexpr(!std::is_const_v<type> && std::is_arithmetic_v<type>)
 	{
-		io.read(reinterpret_cast<char*>(&data), sizeof(data));
+		io.read(static_cast<void*>(&data), sizeof(data));
 	}
 	else
 	{
@@ -1003,23 +1227,27 @@ inline inet_io& operator>>(inet_io& io, type& data)
 class client : public inet_io
 {
 public:
-	client(const inet_address& server_address);
+	inline client(const inet_address& server_address, bool ssl_connection, SSL* ssl, SSL_CTX* ctx);
 	
-	bool connect();
+	inline bool connect();
 	
-	[[nodiscard]] uint16_t get_port() const;
+	[[nodiscard]] inline uint16_t get_port() const;
 	
-	[[nodiscard]] const inet_address& get_server_address() const;
+	[[nodiscard]] inline const inet_address& get_server_address() const;
 	
-	~client();
+	[[nodiscard]] SSL_CTX* get_ctx() const;
+	
+	inline ~client();
 
 private:
 	inet_address server_address;
+	SSL_CTX* ctx;
 };
 
 // #definition-begin client
 
-client::client(const inet_address& server_address) : server_address(server_address)
+inline client::client(const inet_address& server_address, bool ssl_connection = false, SSL* ssl = nullptr, SSL_CTX* ctx = nullptr) :
+		inet_io(ssl), server_address(server_address)
 {
 #if defined(linux)
 	log << color::green << "socket init...\nserver address: " << color::yellow << this->server_address.get_address()
@@ -1035,6 +1263,9 @@ client::client(const inet_address& server_address) : server_address(server_addre
 									<< ". socket : " << socket);
 		return;
 	}
+	
+	this->ctx = ctx;
+	if (this->ctx == nullptr && ssl_connection) this->ctx = init_client_ctx();
 	
 	log << color::green << "success." << color::reset << log_console::l_endent;
 #else
@@ -1052,7 +1283,7 @@ client::client(const inet_address& server_address) : server_address(server_addre
 #endif
 }
 
-bool client::connect()
+inline bool client::connect()
 {
 #if defined(linux)
 	log << color::green << "connecting..." << color::reset << log_console::l_endent;
@@ -1061,6 +1292,27 @@ bool client::connect()
 	{
 		error("connection failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset);
 		return false;
+	}
+	
+	if (!this->ssl && this->ctx)
+	{
+		log << color::green << "SSL_new()..." << color::reset << log_console::l_endent;
+		this->ssl = SSL_new(this->ctx);
+	}
+	
+	if (this->ssl)
+	{
+		SSL_set_fd(this->ssl, this->socket);
+		
+		log << color::green << "SSL_connect()..." << color::reset << log_console::l_endent;
+		
+		if (SSL_connect(ssl) <= 0)
+		{
+			ERR_print_errors_cb(default_error_handler, nullptr);
+			this->ssl = nullptr;
+		}
+		
+		print_cert_info(ssl, client::log_);
 	}
 	
 	log << color::green << "success." << color::reset << log_console::l_endent;
@@ -1079,24 +1331,31 @@ bool client::connect()
 	return true;
 }
 
-uint16_t client::get_port() const
+inline uint16_t client::get_port() const
 {
 	return this->server_address.get_port();
 }
 
 #if defined(linux)
 
-const inet_address& client::get_server_address() const
+inline const inet_address& client::get_server_address() const
 {
 	return server_address;
 }
 
+inline SSL_CTX* client::get_ctx() const
+{
+	return this->ctx;
+}
+
 #endif
 
-client::~client()
+inline client::~client()
 {
 #if defined(linux)
+	log << color::faint << color::yellow << "destruction of client()" << color::reset << log_console::l_endent;
 	::close(this->socket);
+	SSL_free(this->ssl);
 #else
 	closesocket(this->socket);
 #endif
