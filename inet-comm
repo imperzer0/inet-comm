@@ -946,10 +946,10 @@ public:
 #endif
 
 protected:
-	template <receive_datatype type>
+	template <send_datatype type>
 	friend inline inet_io& operator<<(inet_io& io, type data);
 	
-	template <send_datatype type>
+	template <receive_datatype type>
 	friend inline inet_io& operator>>(inet_io& io, type& data);
 
 #if defined(linux)
