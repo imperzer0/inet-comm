@@ -294,7 +294,7 @@ public:
 	
 	inline operator sockaddr_in() const
 	{
-		return this->get_raw();
+		return this->operator const sockaddr_in&();
 	}
 	
 	inline operator const sockaddr_in&() const
