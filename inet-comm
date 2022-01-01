@@ -60,12 +60,13 @@
 
 #define default_error_handler [](const char* str, size_t size, void* err_stream) { *static_cast<log_console*>(err_stream) << ERR_PREFIX << color::red << str << color::reset << log_console::l_endent; return 0; }
 
+template <typename type>
+concept send_datatype = std::is_same_v<std::remove_reference_t<type>, const char*> || std::is_same_v<std::remove_cvref_t<type>, const wchar_t*> ||
+						std::is_same_v<std::remove_cvref_t<type>, std::string> || std::is_same_v<std::remove_cvref_t<type>, std::wstring> ||
+						std::is_arithmetic_v<type>;
 
-class ssl_init
-{
-	ssl_init()
-};
-
+template <typename type>
+concept receive_datatype = !std::is_const_v<type> && std::is_arithmetic_v<type>;
 
 inline static SSL_CTX* init_server_ctx(const SSL_METHOD* method = DTLSv1_2_server_method())
 {
@@ -945,10 +946,10 @@ public:
 #endif
 
 protected:
-	template <typename type>
+	template <receive_datatype type>
 	friend inline inet_io& operator<<(inet_io& io, type data);
 	
-	template <typename type>
+	template <send_datatype type>
 	friend inline inet_io& operator>>(inet_io& io, type& data);
 
 #if defined(linux)
