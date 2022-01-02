@@ -1,12 +1,12 @@
 pkgname="inet-comm"
 epoch=2
-pkgver=2
-pkgrel=1
+pkgver=3
+pkgrel=0
 pkgdesc="ipv4 internet tcp socket c++ library"
 arch=("x86_64")
 url="https://github.com/imperzer0/inet-comm"
 license=('GPL')
-depends=("log-console>=1.13-1")
+depends=("log-console>=1.16-0")
 makedepends=()
 source=("local://inet-comm")
 md5sums=("SKIP")

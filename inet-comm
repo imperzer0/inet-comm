@@ -470,21 +470,22 @@ inline server::server(
 	if (socket < 0)
 	{
 		error("socket() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset
-								 << color::red << ". socket : " << socket);
+								 << color::red << ". socket : " << socket << ". this = " << this);
 		return;
 	}
 	
 	if (int ret = ::setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, (char*)(new int(1)), sizeof(int)); ret < 0)
 	{
-		error("setsockopt() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno)
-									 << color::reset);
+		error("setsockopt() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
+									 << ". this = " << this);
 		return;
 	}
 	
 	log << color::green << "binding..." << color::reset << log_console::l_endent;
 	if (int ret = ::bind(socket, (struct sockaddr*)&address.address, sizeof(address.address)); ret < 0)
 	{
-		error("bind() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset);
+		error("bind() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
+							   << ". this = " << this);
 		return;
 	}
 	
@@ -493,7 +494,8 @@ inline server::server(
 		<< color::green << "listen..." << color::reset << log_console::l_endent;
 	if (listen(socket, max_clients) < 0)
 	{
-		error("listen() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset);
+		error("listen() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
+								 << ". this = " << this);
 		return;
 	}
 	
@@ -505,7 +507,7 @@ inline server::server(
 		log << color::green << "loading certificates..." << color::reset << log_console::l_endent;
 		if (!load_certificates(this->ctx, this->cert_file.c_str(), this->key_file.c_str()))
 		{
-			error("load_certificates() returned " << false);
+			error("load_certificates() returned " << false << color::red << ". this = " << this);
 		}
 	}
 	
@@ -584,7 +586,8 @@ inline bool server::run(bool wait = false)
 	{
 		if (new_socket = ::accept(this->socket, (struct sockaddr*)&address, &addrlen); new_socket < 0)
 		{
-			error("accept() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset);
+			error("accept() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
+									 << ". this = " << this);
 			if (errno == EBADF || errno == EINVAL)
 			{
 				return false;
@@ -604,7 +607,7 @@ inline bool server::run(bool wait = false)
 			ssl = SSL_new(ctx); /** get new SSL state with context **/
 			if (!ssl)
 			{
-				error("SSL_new() returned " << color::italic << color::purple << "nullptr");
+				error("SSL_new() returned " << color::italic << color::purple << "nullptr" << ". this = " << this);
 			}
 			
 			if (!SSL_set_fd(ssl, new_socket)) /** set connection socket to SSL state **/
@@ -616,7 +619,7 @@ inline bool server::run(bool wait = false)
 			{
 				if (SSL_accept(ssl) <= 0)
 				{
-					error("SSL_accept() failed");
+					error("SSL_accept() failed. this = " << this);
 					ERR_print_errors_cb(default_error_handler, &err_);
 					ssl = nullptr;
 				}
@@ -832,7 +835,8 @@ inline void* server::process_client(void* args)
 	(*data.is_client_processing_ptr)[client_socket] = true;
 	pthread_mutex_unlock(&mutex);
 	
-	log << color::green << "processing client...\n\tthread_no = " << data.thread_id << color::green << ";" << color::reset << log_console::l_endent;
+	log << color::green << "processing client...\n\tthread_no = " << data.thread_id << color::green << "; this = " << data.serv
+		<< log_console::l_endent;
 	while (data.process_function(data.socket, data.ssl, data.address, data.serv))
 	{ }
 	log << color::green << "SSL_free()..." << color::reset << log_console::l_endent;
@@ -879,6 +883,7 @@ inline SOCKET server::get_socket() const
 inline server::~server()
 {
 #if defined(linux)
+	log << color::faint << color::yellow << "destruction of server(); this = " << this << color::reset << log_console::l_endent;
 	pthread_kill(this->main_thread, 0);
 	::close(this->socket);
 	SSL_CTX_free(this->ctx);
@@ -984,7 +989,10 @@ bool inet_io::write(const char* data, size_t size)
 	{
 		wrote = SSL_write(this->ssl, data, size);
 		if (!wrote)
+		{
+			err << "this = " << this << color::reset << log_console::l_endent;
 			ERR_print_errors_cb(default_error_handler, &err_);
+		}
 	}
 	else
 	{
@@ -1032,6 +1040,7 @@ bool inet_io::write(const char* data, size_t size)
 
 fail:
 #if defined(linux)
+	err << "this = " << this << color::reset << log_console::l_endent;
 	if (this->ssl)
 		ERR_print_errors_cb(default_error_handler, &err_);
 	else
@@ -1052,7 +1061,8 @@ inline ssize_t inet_io::read(void* data, size_t size, bool non_block = false)
 		flags = fcntl(this->socket, F_GETFL, 0);
 		if (::fcntl(this->socket, F_SETFL, flags | O_NONBLOCK) < 0)
 		{
-			error("fcntl() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno));
+			error("fcntl() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
+									<< ". this = " << this);
 			this->success = false;
 		}
 	}
@@ -1065,6 +1075,7 @@ inline ssize_t inet_io::read(void* data, size_t size, bool non_block = false)
 	
 	if (read <= 0)
 	{
+		err << "this = " << this << color::reset << log_console::l_endent;
 		if (this->ssl)
 			ERR_print_errors_cb(default_error_handler, &err_);
 		else
@@ -1076,7 +1087,8 @@ inline ssize_t inet_io::read(void* data, size_t size, bool non_block = false)
 	{
 		if (::fcntl(this->socket, F_SETFL, flags))
 		{
-			error("fcntl() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno));
+			error("fcntl() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
+									<< ". this = " << this);
 			this->success = false;
 		}
 	}
@@ -1208,7 +1220,7 @@ inline client::client(const inet_address& server_address, bool ssl_connection = 
 	if (this->socket < 0)
 	{
 		error("socket init failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
-									<< ". socket : " << socket);
+									<< ". socket : " << socket << ". this = " << this);
 		return;
 	}
 	
@@ -1263,6 +1275,7 @@ inline bool client::connect()
 		
 		if (SSL_connect(ssl) <= 0)
 		{
+			err << "this = " << this << color::reset << log_console::l_endent;
 			ERR_print_errors_cb(default_error_handler, &err_);
 			this->ssl = nullptr;
 		}
@@ -1308,7 +1321,7 @@ inline SSL_CTX* client::get_ctx() const
 inline client::~client()
 {
 #if defined(linux)
-	log << color::faint << color::yellow << "destruction of client()" << color::reset << log_console::l_endent;
+	log << color::faint << color::yellow << "destruction of client(); this = " << this << color::reset << log_console::l_endent;
 	::close(this->socket);
 	SSL_free(this->ssl);
 #else
