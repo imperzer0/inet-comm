@@ -44,1291 +44,1250 @@
 #include <map>
 #include <vector>
 
+namespace inetio
+{
+	namespace _detail_
+	{
+		static log_console _log_(stdout);
+		static log_console _err_(stderr);
+	}
 
 #if defined(linux)
 
 #define LOG_PREFIX log_console::l_lock << log_console::l_localtime << l_location
 #define ERR_PREFIX log_console::l_lock << log_console::l_localtime << l_location
 
-#define log (log_ << LOG_PREFIX)
-#define err (err_ << ERR_PREFIX)
+#define LOG (_detail_::_log_ << LOG_PREFIX)
+#define ERR (_detail_::_err_ << ERR_PREFIX)
+#define ENDENT color::reset << log_console::l_endent
 
-#define error(message) (err << color::red << color::bold << "error" << color::reset << " : " << color::red << color::italic << message << color::reset << color::red << "." << color::reset << log_console::l_endent)
-#define fatal_error(message) error(message); throw std::runtime_error(message)
-#define print(stream, message) ((stream) << LOG_PREFIX << color::yellow << color::italic << message << color::reset << log_console::l_unlock)
-#define println(stream, message) ((stream) << LOG_PREFIX << color::yellow << color::italic << message << color::reset << log_console::l_endent)
+#define ERROR(message) (ERR << color::red << color::bold << "error" << color::reset << " : " << color::red << color::italic << message << color::reset << color::red << "." << ENDENT)
+#define FATAL_ERROR(message) ERROR(message); throw std::runtime_error(message)
+#define PRINT(stream, message) ((stream) << LOG_PREFIX << color::yellow << color::italic << message << color::reset << log_console::l_unlock)
+#define PRINTLN(stream, message) ((stream) << LOG_PREFIX << color::yellow << color::italic << message << ENDENT)
 
-#define default_error_handler [](const char* str, size_t size, void* err_stream) { *static_cast<log_console*>(err_stream) << ERR_PREFIX << color::red << str << color::reset << log_console::l_endent; return 0; }
-
-template <typename type>
-concept send_datatype = std::is_same_v<std::remove_reference_t<type>, const char*> || std::is_same_v<std::remove_cvref_t<type>, const wchar_t*> ||
-						std::is_same_v<std::remove_cvref_t<type>, std::string> || std::is_same_v<std::remove_cvref_t<type>, std::wstring> ||
-						std::is_arithmetic_v<type>;
-
-template <typename type>
-concept receive_datatype = !std::is_const_v<type> && std::is_arithmetic_v<type>;
-
-inline static SSL_CTX* init_server_ctx(const SSL_METHOD* method = DTLSv1_2_server_method())
-{
-	SSL_CTX* ctx;
+#define DEFAULT_ERROR_HANDLER [](const char* str, size_t size, void* err_stream) { *static_cast<log_console*>(err_stream) << ERR_PREFIX << color::red << str << ENDENT; return 0; }
 	
-	OpenSSL_add_all_algorithms();  /* load & register all cryptos, etc. */
-	SSL_load_error_strings();   /* load all error messages */
+	template <typename type>
+	concept send_datatype = std::is_same_v<std::remove_reference_t<type>, const char*> || std::is_same_v<std::remove_cvref_t<type>, const wchar_t*> ||
+							std::is_same_v<std::remove_cvref_t<type>, std::string> || std::is_same_v<std::remove_cvref_t<type>, std::wstring> ||
+							std::is_arithmetic_v<type>;
 	
-	ctx = SSL_CTX_new(method);   /* create new context from method */
-	if (ctx == nullptr)
+	template <typename type>
+	concept receive_datatype = !std::is_const_v<type> && std::is_arithmetic_v<type>;
+	
+	inline static SSL_CTX* init_server_ctx(const SSL_METHOD* method = DTLS_server_method())
 	{
-		ERR_print_errors_cb(default_error_handler, new log_console(stderr));
+		SSL_CTX* ctx;
+		
+		OpenSSL_add_all_algorithms();  /* load & register all cryptos, etc. */
+		SSL_load_error_strings();   /* load all error messages */
+		
+		ctx = SSL_CTX_new(method);   /* create new context from method */
+		if (ctx == nullptr)
+		{
+			ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, new log_console(stderr));
+			return ctx;
+		}
+		
+		SSL_CTX_set_cipher_list(ctx, "ALL:eNULL");
+		
 		return ctx;
 	}
 	
-	SSL_CTX_set_cipher_list(ctx, "ALL:eNULL");
-	
-	return ctx;
-}
-
-inline static SSL_CTX* init_client_ctx(const SSL_METHOD* method = DTLSv1_2_client_method())
-{
-	SSL_CTX* ctx;
-	
-	OpenSSL_add_all_algorithms();  /* load & register all cryptos, etc. */
-	SSL_load_error_strings();   /* load all error messages */
-	
-	ctx = SSL_CTX_new(method);   /* create new context from method */
-	if (ctx == nullptr)
+	inline static SSL_CTX* init_client_ctx(const SSL_METHOD* method = DTLS_client_method())
 	{
-		ERR_print_errors_cb(default_error_handler, new log_console(stderr));
+		SSL_CTX* ctx;
+		
+		OpenSSL_add_all_algorithms();  /* load & register all cryptos, etc. */
+		SSL_load_error_strings();   /* load all error messages */
+		
+		ctx = SSL_CTX_new(method);   /* create new context from method */
+		if (ctx == nullptr)
+		{
+			ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, new log_console(stderr));
+			return ctx;
+		}
+		
+		SSL_CTX_set_cipher_list(ctx, "ALL:eNULL");
+		
 		return ctx;
 	}
 	
-	SSL_CTX_set_cipher_list(ctx, "ALL:eNULL");
-	
-	return ctx;
-}
-
-inline static bool load_certificates(SSL_CTX* ctx, const char* cert_file, const char* key_file)
-{
-	///New lines
-	if (SSL_CTX_load_verify_locations(ctx, cert_file, key_file) != 1)
-		ERR_print_errors_cb(default_error_handler, new log_console(stderr));
-	
-	if (SSL_CTX_set_default_verify_paths(ctx) != 1)
-		ERR_print_errors_cb(default_error_handler, new log_console(stderr));
-	///End new lines
-	
-	/** set the local certificate from CertFile **/
-	if (SSL_CTX_use_certificate_file(ctx, cert_file, SSL_FILETYPE_PEM) <= 0)
+	inline static bool load_certificates(SSL_CTX* ctx, const char* cert_file, const char* key_file)
 	{
-		ERR_print_errors_cb(default_error_handler, new log_console(stderr));
-		return false;
+		///New lines
+		if (SSL_CTX_load_verify_locations(ctx, cert_file, key_file) != 1)
+			ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, new log_console(stderr));
+		
+		if (SSL_CTX_set_default_verify_paths(ctx) != 1)
+			ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, new log_console(stderr));
+		///End new lines
+		
+		/** set the local certificate from CertFile **/
+		if (SSL_CTX_use_certificate_file(ctx, cert_file, SSL_FILETYPE_PEM) <= 0)
+		{
+			ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, new log_console(stderr));
+			return false;
+		}
+		
+		/** set the private key from KeyFile (may be the same as CertFile) **/
+		SSL_CTX_set_default_passwd_cb_userdata(ctx, (void*)"1488");
+		if (SSL_CTX_use_PrivateKey_file(ctx, key_file, SSL_FILETYPE_PEM) <= 0)
+		{
+			ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, new log_console(stderr));
+			return false;
+		}
+		
+		/** verify private key **/
+		if (!SSL_CTX_check_private_key(ctx))
+		{
+			*new log_console(stderr) << log_console::l_localtime << l_location << color::red
+									 << "Private key does not match the public certificate" << ENDENT;
+			return false;
+		}
+		
+		///New lines - Force the client-side have a certificate
+		SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, nullptr);
+		SSL_CTX_set_verify_depth(ctx, 4);
+		///End new lines
+		return true;
 	}
 	
-	/** set the private key from KeyFile (may be the same as CertFile) **/
-	SSL_CTX_set_default_passwd_cb_userdata(ctx, (void*)"1488");
-	if (SSL_CTX_use_PrivateKey_file(ctx, key_file, SSL_FILETYPE_PEM) <= 0)
+	inline static void print_cert_info(SSL* ssl, log_console& stream)
 	{
-		ERR_print_errors_cb(default_error_handler, new log_console(stderr));
-		return false;
+		X509* cert;
+		char* line;
+		
+		cert = SSL_get_peer_certificate(ssl); /* Get certificates (if available) */
+		if (cert)
+		{
+			PRINTLN(stream, "Server certificates:");
+			line = X509_NAME_oneline(X509_get_subject_name(cert), nullptr, 0);
+			PRINTLN(stream, "Subject: " << color::blue << line);
+			delete[] line;
+			line = X509_NAME_oneline(X509_get_issuer_name(cert), nullptr, 0);
+			PRINT(stream, "Issuer: " << color::blue << line);
+			delete[] line;
+			X509_free(cert);
+		}
+		else
+		{
+			PRINTLN(stream, "No certificates.");
+		}
 	}
-	
-	/** verify private key **/
-	if (!SSL_CTX_check_private_key(ctx))
-	{
-		*new log_console(stderr) << log_console::l_localtime << l_location << color::red
-								 << "Private key does not match the public certificate" << color::reset << log_console::l_endent;
-		return false;
-	}
-	
-	///New lines - Force the client-side have a certificate
-	//SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
-	//SSL_CTX_set_verify_depth(ctx, 4);
-	///End new lines
-	return true;
-}
-
-inline static void print_cert_info(SSL* ssl, log_console& stream)
-{
-	X509* cert;
-	char* line;
-	
-	cert = SSL_get_peer_certificate(ssl); /* Get certificates (if available) */
-	if (cert)
-	{
-		println(stream, "Server certificates:");
-		line = X509_NAME_oneline(X509_get_subject_name(cert), nullptr, 0);
-		println(stream, "Subject: " << color::blue << line);
-		delete[] line;
-		line = X509_NAME_oneline(X509_get_issuer_name(cert), nullptr, 0);
-		print(stream, "Issuer: " << color::blue << line);
-		delete[] line;
-		X509_free(cert);
-	}
-	else
-	{
-		println(stream, "No certificates.");
-	}
-}
 
 #else
 
-#define log std::cout
-#define err std::cerr
+#define LOG std::cout
+#define ERR std::cerr
 
-#define error(message) (err << "error" << " : " << message << "\n")
-#define fatal_error(message) error(message); throw std::runtime_error(message)
-
-typedef decltype(in_addr::S_un.S_addr) in_addr_t;
-typedef ADDRESS_FAMILY sa_family_t;
+#define ERROR(message) (ERR << "error" << " : " << message << "\n")
+#define FATAL_ERROR(message) error(message); throw std::runtime_error(message)
+	
+	typedef decltype(in_addr::S_un.S_addr) in_addr_t;
+	typedef ADDRESS_FAMILY sa_family_t;
 
 #endif
-
+	
+	inline in_addr_t inet_pton(sa_family_t af, const char* address)
+	{
+		in_addr_t ret{0};
+		::inet_pton(af, address, &ret);
+		return ret;
+	}
 
 #if defined(linux)
-
-class suppress_signal
-{
-public:
-	inline explicit suppress_signal(int _sig) : sig(_sig)
-	{
-		::signal(_sig, sig_handle);
-	}
 	
-	inline ~suppress_signal()
+	class suppress_signal
 	{
-		::signal(this->sig, SIG_DFL);
-	}
+	public:
+		inline explicit suppress_signal(int _sig) : sig(_sig)
+		{ ::signal(_sig, sig_handle); }
+		
+		inline ~suppress_signal()
+		{ ::signal(this->sig, SIG_DFL); }
+		
+		inline static void enable_log(bool status = true)
+		{ if (status) _log_ << log_console::on; else _log_ << log_console::off; }
+		
+		inline static void enable_err(bool status = true)
+		{ if (status) _err_ << log_console::on; else _err_ << log_console::off; }
 	
-	inline static void enable_log(bool status = true)
-	{
-		if (status) log_ << log_console::on;
-		else log_ << log_console::off;
-	}
-	
-	inline static void enable_err(bool status = true)
-	{
-		if (status) err_ << log_console::on;
-		else err_ << log_console::off;
-	}
-
-private:
-	int sig;
-	
-	inline static void sig_handle(int sig)
-	{
-		error(::sigabbrev_np(sig) << " " << color::bold << ::sigdescr_np(sig));
-	}
-	
-	static log_console log_;
-	static log_console err_;
-};
+	private:
+		int sig;
+		
+		inline static void sig_handle(int sig)
+		{ ERROR(::sigabbrev_np(sig) << " " << color::bold << ::sigdescr_np(sig)); }
+		
+		static log_console _log_;
+		static log_console _err_;
+	};
 
 // #definition-begin suppress_signal
-
-log_console suppress_signal::log_(stdout);
-log_console suppress_signal::err_(stderr);
+	
+	log_console suppress_signal::_log_(stdout);
+	log_console suppress_signal::_err_(stderr);
 
 // #definition-end suppress_signal
 #endif
-
-class server;
-
-inline in_addr_t inet_pton(sa_family_t af, const char* address)
-{
-	in_addr_t ret{0};
-	inet_pton(af, address, &ret);
-	return ret;
-}
-
-class inet_address
-{
-public:
-	inline inet_address() = default;
 	
-	inline inet_address(const sockaddr_in& address) : address(address)
-	{ }
+	class server;
 	
-	inline inet_address(sa_family_t family, uint16_t port, in_addr_t address) : inet_address(
-			*new sockaddr_in{
-					family, ::htons(port),
+	class inet_address
+	{
+	public:
+		inline inet_address() = default;
+		
+		inline inet_address(const sockaddr_in& address) : address(address)
+		{ }
+		
+		inline inet_address(sa_family_t family, uint16_t port, in_addr_t address)
+				: inet_address(
+				*new sockaddr_in{
+						family, ::htons(port),
 #if defined(linux)
-					in_addr{address}}
+						in_addr{address}}
 #else
-			in_addr{.S_un = {.S_addr = address}}}
+				in_addr{.S_un = {.S_addr = address}}}
 #endif
-	)
-	{ }
+		)
+		{ }
+		
+		inline inet_address(sa_family_t family, uint16_t port, const std::string& address)
+				: inet_address(family, port, inet_pton(family, address.c_str()))
+		{ }
+		
+		inline static inet_address& from_ipv4(const std::string& address, uint16_t default_port)
+		{
+			auto& addr = *new inet_address;
+			size_t pos = address.find(':');
+			if (pos == std::string::npos)
+			{
+				addr.set_address(AF_INET, address.c_str());
+			}
+			else
+			{
+				addr.set_address(AF_INET, address.substr(0, pos).c_str());
+				if (++pos < address.size())
+				{
+					addr.set_port(std::stoul(address.substr(pos, address.size() - pos)));
+				}
+				else
+				{
+					addr.set_port(default_port);
+				}
+			}
+			return addr;
+		}
+		
+		inline static inet_address& from_ipv6(const std::string& address, uint16_t default_port)
+		{
+			auto& addr = *new inet_address;
+			size_t pos = address.find(']');
+			int shift = address.starts_with('[');
+			if (pos == std::string::npos)
+			{
+				addr.set_address(AF_INET6, address.c_str());
+				addr.set_port(default_port);
+			}
+			else
+			{
+				addr.set_address(AF_INET6, address.substr(0, pos).c_str() + shift);
+				if (shift) ++pos;
+				addr.set_port(std::stoul(address.substr(pos, address.size() - pos)));
+			}
+			return addr;
+		}
+		
+		[[nodiscard]] inline const char* get_address() const
+		{ return ::inet_ntoa(this->address.sin_addr); }
+		
+		[[nodiscard]] inline uint16_t get_port() const
+		{ return ::ntohs(this->address.sin_port); }
+		
+		[[nodiscard]] inline sa_family_t get_family() const
+		{ return ::ntohs(this->address.sin_port); }
+		
+		[[nodiscard]] inline sockaddr_in get_raw() const
+		{ return this->address; }
+		
+		inline void set_address(sa_family_t family, const char* address)
+		{
+			::inet_pton(family, address, &this->address.sin_addr.s_addr);
+			this->address.sin_family = family;
+		}
+		
+		inline void set_port(uint16_t port)
+		{ this->address.sin_port = ::htons(port); }
+		
+		inline operator sockaddr_in() const
+		{ return this->operator const sockaddr_in&(); }
+		
+		inline operator const sockaddr_in&() const
+		{ return this->address; }
 	
-	inline inet_address(sa_family_t family, uint16_t port, const char* address) : inet_address(family, port, inet_pton(family, address))
-	{ }
-	
-	[[nodiscard]] inline const char* get_address() const
-	{
-		return inet_ntoa(this->address.sin_addr);
-	}
-	
-	[[nodiscard]] inline uint16_t get_port() const
-	{
-		return ntohs(this->address.sin_port);
-	}
-	
-	[[nodiscard]] inline sa_family_t get_family() const
-	{
-		return ntohs(this->address.sin_port);
-	}
-	
-	[[nodiscard]] inline sockaddr_in get_raw() const
-	{
-		return this->address;
-	}
-	
-	inline void set_address(sa_family_t family, const char* address)
-	{
-		inet_pton(family, address, &this->address.sin_addr.s_addr);
-		this->address.sin_family = family;
-	}
-	
-	inline void set_port(uint16_t port)
-	{
-		this->address.sin_port = ::htons(port);
-	}
-	
-	inline operator sockaddr_in() const
-	{
-		return this->operator const sockaddr_in&();
-	}
-	
-	inline operator const sockaddr_in&() const
-	{
-		return this->address;
-	}
-
-private:
-	friend class server;
-	
-	friend class inet_io;
-	
-	sockaddr_in address;
-};
+	private:
+		friend class server;
+		
+		friend class inet_io;
+		
+		sockaddr_in address;
+	};
 
 
 #if defined (linux)
-
-typedef bool (* client_process_function)(int socket, SSL* ssl, const inet_address& address, server* server);
-
-#else
-
-typedef bool (* client_process_function)(SOCKET socket, const inet_address& address, server* server);
-
-#endif
-
-struct server_client_data
-{
-#if defined(linux)
-	int socket;
-	std::map<int, bool>* is_client_processing_ptr;
-	SSL* ssl;
-#else
-	SOCKET socket;
-	std::map<SOCKET, bool>* is_client_processing_ptr;
-#endif
-	inet_address address;
-	server* serv;
-	client_process_function process_function;
-	int thread_id;
-	int* threads_count;
-};
-
-class server
-{
-public:
-	inline server(
-			int max_clients, const inet_address& address, client_process_function process_function, void* extra, const std::string& cert_file,
-			const std::string& key_file);
 	
-	inline bool run(bool wait);
-
-#if defined(linux)
-	
-	inline static void* server_thread(void* args);
+	typedef bool (* client_process_function)(int socket, SSL* ssl, const inet_address& address, server* server);
 
 #else
 	
-	inline static DWORD WINAPI server_thread(void* args);
+	typedef bool (* client_process_function)(SOCKET socket, const inet_address& address, server* server);
 
 #endif
 	
-	inline void run_server_thread(bool wait_for_child_threads);
-	
-	inline static void wait_for_all_servers();
+	class server
+	{
+	public:
+		struct server_client_data
+		{
+#if defined(linux)
+			int socket;
+			std::map<int, bool>* is_client_processing_ptr;
+			SSL* ssl;
+#else
+			SOCKET socket;
+			std::map<SOCKET, bool>* is_client_processing_ptr;
+#endif
+			inet_address address;
+			server* serv;
+			client_process_function process_function;
+			int thread_id;
+			int* threads_count;
+		};
+		
+		inline server(
+				int max_clients, const inet_address& address, client_process_function process_function, void* extra, const std::string& cert_file,
+				const std::string& key_file);
+		
+		inline bool run(bool wait);
 
 #if defined(linux)
-	
-	inline static void open_port_in_iptables(uint16_t port);
-	
-	inline static void close_port_in_iptables(uint16_t port);
-	
-	inline static struct ifreq& get_machine_ip(const char* interface_name);
-	
-	inline static std::vector<struct ifaddrs*>& list_all_network_interfaces();
-	
-	[[nodiscard]] int get_socket() const;
+		
+		inline static void* server_thread(void* args);
 
 #else
-	
-	[[nodiscard]] SOCKET get_socket() const;
+		
+		inline static DWORD WINAPI server_thread(void* args);
 
 #endif
-	
-	[[nodiscard]] inline int get_max_clients() const
-	{
-		return max_clients;
-	}
-	
-	[[nodiscard]] inline const inet_address& get_address() const
-	{
-		return this->address;
-	}
-	
-	[[nodiscard]] inline client_process_function get_process_function() const
-	{
-		return process_function;
-	}
-	
-	[[nodiscard]] inline const std::string& get_cert_file() const
-	{
-		return cert_file;
-	}
-	
-	[[nodiscard]] inline const std::string& get_key_file() const
-	{
-		return key_file;
-	}
-	
-	inline ~server();
-	
-	void* extra;
+		
+		inline void run_server_thread(bool wait_for_child_threads);
+		
+		inline static void wait_for_all_servers();
 
 #if defined(linux)
-	
-	static log_console log_;
-	static log_console err_;
-
-#endif
-
-private:
-#if defined(linux)
-	
-	inline static void* process_client(void* args);
-	
-	pthread_t main_thread = 0;
-	int socket;
-	SSL_CTX* ctx = nullptr;
+		
+		inline static void open_port_in_iptables(uint16_t port);
+		
+		inline static void close_port_in_iptables(uint16_t port);
+		
+		inline static struct ifreq& get_machine_ip(const char* interface_name);
+		
+		inline static std::vector<struct ifaddrs*>& list_all_network_interfaces();
+		
+		[[nodiscard]] int get_socket() const;
 
 #else
-	
-	inline static DWORD WINAPI process_client(void* args);
-	
-	SOCKET socket;
-	HANDLE main_thread = nullptr;
+		
+		[[nodiscard]] SOCKET get_socket() const;
 
 #endif
-	bool wait_for_child_threads = false;
+		
+		[[nodiscard]] inline int get_max_clients() const
+		{ return max_clients; }
+		
+		[[nodiscard]] inline const inet_address& get_address() const
+		{ return this->address; }
+		
+		[[nodiscard]] inline client_process_function get_process_function() const
+		{ return process_function; }
+		
+		[[nodiscard]] inline const std::string& get_cert_file() const
+		{ return cert_file; }
+		
+		[[nodiscard]] inline const std::string& get_key_file() const
+		{ return key_file; }
+		
+		inline ~server();
+		
+		void* extra;
 	
-	int max_clients;
-	inet_address address;
-	client_process_function process_function;
+	private:
 #if defined(linux)
-	static pthread_mutex_t mutex;
-	std::string cert_file;
-	std::string key_file;
+		
+		inline static void* process_client(void* args);
+		
+		pthread_t main_thread = 0;
+		int socket;
+		SSL_CTX* ctx = nullptr;
+
+#else
+		
+		inline static DWORD WINAPI process_client(void* args);
+		
+		SOCKET socket;
+		HANDLE main_thread = nullptr;
+
 #endif
-	static int server_threads;
-};
+		bool wait_for_child_threads = false;
+		
+		int max_clients;
+		inet_address address;
+		client_process_function process_function;
+#if defined(linux)
+		static pthread_mutex_t mutex;
+		std::string cert_file;
+		std::string key_file;
+#endif
+		static int server_threads;
+	};
+	
+	
+	class inet_io
+	{
+	public:
+#if defined(linux)
+		
+		inline inet_io(int socket) : socket(socket), ssl(nullptr)
+		{ }
+		
+		inline inet_io(SSL* ssl) : socket(ssl ? SSL_get_fd(ssl) : -1), ssl(ssl)
+		{ }
+
+#else
+		
+		inline inet_io(SOCKET socket) : socket(socket)
+		{ }
+
+#endif
+
+#if defined(linux)
+		
+		template <size_t max_attempts = 0>
+		inline bool write(const void* data, size_t size);
+
+#else
+		
+		inline bool write(const char* data, size_t size);
+
+#endif
+
+#if defined(linux)
+		
+		inline ssize_t read(void* data, size_t size, bool non_block);
+		
+		[[nodiscard]] inline int get_socket() const
+		{ return socket; }
+		
+		[[nodiscard]] inline SSL* get_ssl() const
+		{ return this->ssl; }
+
+#else
+		
+		inline size_t read(char* data, size_t size);
+	
+		[[nodiscard]] inline SOCKET get_socket() const;
+
+#endif
+		
+		inline operator bool() const;
+	
+	protected:
+		template <send_datatype type>
+		friend inline inet_io& operator<<(inet_io& io, type data);
+		
+		template <receive_datatype type>
+		friend inline inet_io& operator>>(inet_io& io, type& data);
+
+#if defined(linux)
+		int socket;
+		SSL* ssl;
+#else
+		SOCKET socket;
+#endif
+		bool success = true;
+	};
+	
+	
+	class client : public inet_io
+	{
+	public:
+#if defined(linux)
+		
+		inline client(const inet_address& server_address, bool ssl_connection, SSL* ssl, SSL_CTX* ctx);
+
+#else
+		inline client(const inet_address& server_address);
+#endif
+		
+		inline bool connect();
+		
+		[[nodiscard]] inline uint16_t get_port() const
+		{ return this->server_address.get_port(); }
+		
+		[[nodiscard]] inline const inet_address& get_server_address() const
+		{ return server_address; }
+
+#if defined(linux)
+		
+		[[nodiscard]] SSL_CTX* get_ctx() const
+		{ return this->ctx; }
+
+#endif
+		
+		inline ~client();
+	
+	private:
+		inet_address server_address;
+		SSL_CTX* ctx;
+	};
+
 
 // #definition-begin server
-
-int server::server_threads = 0;
+	
+	int server::server_threads = 0;
 
 #if defined(linux)
-
-log_console     server::log_(stdout);
-log_console     server::err_(stderr);
-pthread_mutex_t server::mutex = PTHREAD_MUTEX_INITIALIZER;
-
-
-inline server::server(
-		int max_clients, const inet_address& address, client_process_function process_function, void* extra = nullptr,
-		const std::string& cert_file = "", const std::string& key_file = "") :
-		max_clients(max_clients), address(address), process_function(process_function), extra(extra), cert_file(cert_file), key_file(key_file)
-{
-	log << color::green << "socket init...\nserver address: " << color::yellow << address.get_address()
-		<< color::green << ";\nsocket family: " << address.get_family()
-		<< color::green << ";\nport = " << address.get_port()
-		<< color::green << ";\n\tmax connections accept = " << max_clients
-		<< color::green << ";" << color::reset << log_console::l_endent;
-	socket = ::socket(AF_INET, SOCK_STREAM, 0);
-	if (socket < 0)
-	{
-		error("socket() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset
-								 << color::red << ". socket : " << socket << ". this = " << this);
-		return;
-	}
+	pthread_mutex_t server::mutex = PTHREAD_MUTEX_INITIALIZER;
 	
-	if (int ret = ::setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, (char*)(new int(1)), sizeof(int)); ret < 0)
-	{
-		error("setsockopt() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
-									 << ". this = " << this);
-		return;
-	}
 	
-	log << color::green << "binding..." << color::reset << log_console::l_endent;
-	if (int ret = ::bind(socket, (struct sockaddr*)&address.address, sizeof(address.address)); ret < 0)
+	inline server::server(
+			int max_clients, const inet_address& address, client_process_function process_function, void* extra = nullptr,
+			const std::string& cert_file = "", const std::string& key_file = "") :
+			max_clients(max_clients), address(address), process_function(process_function), extra(extra), cert_file(cert_file), key_file(key_file)
 	{
-		error("bind() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
-							   << ". this = " << this);
-		return;
-	}
-	
-	log << color::green << "success.\n" << color::reset
-		<< color::green << "listening socket = " << color::reset << socket << color::green << " ...\n" << color::reset
-		<< color::green << "listen..." << color::reset << log_console::l_endent;
-	if (listen(socket, max_clients) < 0)
-	{
-		error("listen() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
-								 << ". this = " << this);
-		return;
-	}
-	
-	if (!this->cert_file.empty() && !this->key_file.empty())
-	{
-		log << color::green << "initializing ctx..." << color::reset << log_console::l_endent;
-		this->ctx = init_server_ctx();
-		
-		log << color::green << "loading certificates..." << color::reset << log_console::l_endent;
-		if (!load_certificates(this->ctx, this->cert_file.c_str(), this->key_file.c_str()))
+		LOG << color::green << "socket init...\nserver address: " << color::yellow << address.get_address()
+			<< color::green << ";\nsocket family: " << address.get_family()
+			<< color::green << ";\nport = " << address.get_port()
+			<< color::green << ";\n\tmax connections accept = " << max_clients
+			<< color::green << ";" << ENDENT;
+		socket = ::socket(AF_INET, SOCK_STREAM, 0);
+		if (socket < 0)
 		{
-			error("load_certificates() returned " << false << color::red << ". this = " << this);
+			ERROR("socket() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset
+									 << color::red << ". socket : " << socket << ". this = " << this);
+			return;
 		}
+		
+		if (int ret = ::setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, (char*)(new int(1)), sizeof(int)); ret < 0)
+		{
+			ERROR("setsockopt() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
+										 << ". this = " << this);
+			return;
+		}
+		
+		LOG << color::green << "binding..." << ENDENT;
+		if (int ret = ::bind(socket, (struct sockaddr*)&address.address, sizeof(address.address)); ret < 0)
+		{
+			ERROR("bind() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
+								   << ". this = " << this);
+			return;
+		}
+		
+		LOG << color::green << "success.\n" << color::reset
+			<< color::green << "listening socket = " << color::reset << socket << color::green << " ...\n" << color::reset
+			<< color::green << "listen..." << ENDENT;
+		if (listen(socket, max_clients) < 0)
+		{
+			ERROR("listen() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
+									 << ". this = " << this);
+			return;
+		}
+		
+		if (!this->cert_file.empty() && !this->key_file.empty())
+		{
+			LOG << color::green << "initializing ctx..." << ENDENT;
+			this->ctx = init_server_ctx();
+			
+			LOG << color::green << "loading certificates..." << ENDENT;
+			if (!load_certificates(this->ctx, this->cert_file.c_str(), this->key_file.c_str()))
+			{
+				ERROR("load_certificates() returned " << false << color::red << ". this = " << this);
+			}
+		}
+		
+		LOG << color::green << "success." << ENDENT;
 	}
-	
-	log << color::green << "success." << color::reset << log_console::l_endent;
-}
 
 #else
-
-inline server::server(int max_clients, const inet_address& address, client_process_function process_function, void* extra) :
-		max_clients(max_clients), address(address), process_function(process_function), extra(extra)
-{
-	log << "winsock lib init...\n";
-
-	WSADATA wsa;
-
-	if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
-	{
-		error("WSAStartup() failed with error " << WSAGetLastError());
-		return;
-	}
-
-	log << "done.\n";
-
-	log << "socket init...\nserver address: " << address.get_address()
-		<< ";\nsocket family: " << address.get_family()
-		<< ";\nport = " << address.get_port()
-		<< ";\n\tmax connections accept = " << max_clients
-		<< ";\n";
-	socket = ::socket(AF_INET, SOCK_STREAM, 0);
-	if (socket == INVALID_SOCKET)
-	{
-		error("socket() failed with error " << GetLastError() << ". socket : " << socket);
-		return;
-	}
 	
-	if (int ret = ::setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, (char*)(new int(1)), sizeof(int)); ret < 0)
+	inline server::server(int max_clients, const inet_address& address, client_process_function process_function, void* extra) :
+			max_clients(max_clients), address(address), process_function(process_function), extra(extra)
 	{
-		error("setsockopt() failed with error" << GetLastError());
-		return;
-	}
+		LOG << "winsock lib init...\n";
 	
-	log << "binding...\n";
-	if (int ret = ::bind(socket, (struct sockaddr*)&address.address, sizeof(address.address)); ret < 0)
-	{
-		error("bind() failed with error " << GetLastError());
-		return;
-	}
+		WSADATA wsa;
 	
-	log << "success.\n"
-		<< "listening socket = " << socket << " ...\n"
-		<< "listen...\n";
-	if (listen(socket, max_clients) < 0)
-	{
-		error("listen() failed with error " << GetLastError());
-		return;
+		if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
+		{
+			ERROR("WSAStartup() failed with error " << WSAGetLastError());
+			return;
+		}
+	
+		LOG << "done.\n";
+	
+		LOG << "socket init...\nserver address: " << address.get_address()
+			<< ";\nsocket family: " << address.get_family()
+			<< ";\nport = " << address.get_port()
+			<< ";\n\tmax connections accept = " << max_clients
+			<< ";\n";
+		socket = ::socket(AF_INET, SOCK_STREAM, 0);
+		if (socket == INVALID_SOCKET)
+		{
+			ERROR("socket() failed with error " << GetLastError() << ". socket : " << socket);
+			return;
+		}
+		
+		if (int ret = ::setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, (char*)(new int(1)), sizeof(int)); ret < 0)
+		{
+			ERROR("setsockopt() failed with error" << GetLastError());
+			return;
+		}
+		
+		LOG << "binding...\n";
+		if (int ret = ::bind(socket, (struct sockaddr*)&address.address, sizeof(address.address)); ret < 0)
+		{
+			ERROR("bind() failed with error " << GetLastError());
+			return;
+		}
+		
+		LOG << "success.\n"
+			<< "listening socket = " << socket << " ...\n"
+			<< "listen...\n";
+		if (listen(socket, max_clients) < 0)
+		{
+			ERROR("listen() failed with error " << GetLastError());
+			return;
+		}
+		LOG << "success.\n";
 	}
-	log << "success.\n";
-}
 
 #endif
 
 #if defined(linux)
-
-inline bool server::run(bool wait = false)
-{
-	int threads_count = 0, thread_id = 0;
 	
-	std::map<int, bool> is_client_processing;
-	
-	struct sockaddr_in address{ };
-	socklen_t addrlen = sizeof(address);
-	
-	int new_socket;
-	
-	while (true)
+	inline bool server::run(bool wait = false)
 	{
-		if (new_socket = ::accept(this->socket, (struct sockaddr*)&address, &addrlen); new_socket < 0)
+		int threads_count = 0, thread_id = 0;
+		
+		std::map<int, bool> is_client_processing;
+		
+		struct sockaddr_in address{ };
+		socklen_t addrlen = sizeof(address);
+		
+		int new_socket;
+		
+		while (true)
 		{
-			error("accept() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
-									 << ". this = " << this);
-			if (errno == EBADF || errno == EINVAL)
+			if (new_socket = ::accept(this->socket, (struct sockaddr*)&address, &addrlen); new_socket < 0)
 			{
-				return false;
-			}
-			break;
-		}
-		
-		log << color::green << "====== new connection ======\n socket = " << color::reset << new_socket
-			<< color::green << "\n address = " << color::yellow << ::inet_ntoa(address.sin_addr)
-			<< color::green << "\n port = " << color::reset << ::ntohs(address.sin_port)
-			<< color::green << "\n\n============================" << color::reset << log_console::l_endent;
-		
-		SSL* ssl = nullptr;
-		
-		if (this->ctx)
-		{
-			ssl = SSL_new(ctx); /** get new SSL state with context **/
-			if (!ssl)
-			{
-				error("SSL_new() returned " << color::italic << color::purple << "nullptr" << ". this = " << this);
-			}
-			
-			if (!SSL_set_fd(ssl, new_socket)) /** set connection socket to SSL state **/
-			{
-				ERR_print_errors_cb(default_error_handler, &err_);
-			}
-			
-			if (ssl)
-			{
-				if (SSL_accept(ssl) <= 0)
+				ERROR("accept() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
+										 << ". this = " << this);
+				if (errno == EBADF || errno == EINVAL)
 				{
-					error("SSL_accept() failed. this = " << this);
-					ERR_print_errors_cb(default_error_handler, &err_);
-					ssl = nullptr;
+					return false;
 				}
+				break;
 			}
 			
-			print_cert_info(ssl, server::log_);
-		}
-		
-		auto* dat = new server_client_data{ };
-		dat->socket = new_socket;
-		dat->ssl = ssl;
-		dat->serv = const_cast<server*>(this);
-		dat->address = inet_address(address);
-		dat->is_client_processing_ptr = &is_client_processing;
-		dat->thread_id = ++thread_id;
-		dat->threads_count = &++threads_count;
-		dat->process_function = process_function;
-		
-		log << color::green << "running client processing thread..." << color::reset << log_console::l_endent;
-		
-		pthread_t pthread;
-		pthread_create(&pthread, nullptr, process_client, (void*)dat);
-		::pthread_detach(pthread);
-		
-		log << color::green << "done." << color::reset << log_console::l_endent;
-	}
-	
-	while (wait && threads_count > 0)
-	{
-		::usleep(10000);
-	}
-	
-	return true;
-}
-
-#else
-
-inline bool server::run(bool wait) const
-{
-	int threads_count          = 0, thread_id = 0;
-	
-	std::map<SOCKET, bool> is_client_processing;
-
-	struct sockaddr_in address { };
-	int addrlen = sizeof(address);
-
-	SOCKET new_socket;
-	
-	while (true)
-	{
-		if (new_socket = ::accept(this->socket, (struct sockaddr*)&address, &addrlen); new_socket < 0)
-		{
-			error("accept() failed with error " << GetLastError());
-			if (errno == EBADF || errno == EINVAL)
+			LOG << color::green << "====== new connection ======\n socket = " << color::reset << new_socket
+				<< color::green << "\n address = " << color::yellow << ::inet_ntoa(address.sin_addr)
+				<< color::green << "\n port = " << color::reset << ::ntohs(address.sin_port)
+				<< color::green << "\n\n============================" << ENDENT;
+			
+			SSL* ssl = nullptr;
+			
+			if (this->ctx)
 			{
-				return false;
+				ssl = SSL_new(ctx); /** get new SSL state with context **/
+				if (!ssl)
+				{
+					ERROR("SSL_new() returned " << color::italic << color::purple << "nullptr" << ". this = " << this);
+				}
+				
+				if (!SSL_set_fd(ssl, new_socket)) /** set connection socket to SSL state **/
+				{
+					ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, &_detail_::_err_);
+				}
+				
+				if (ssl)
+				{
+					if (SSL_accept(ssl) <= 0)
+					{
+						ERROR("SSL_accept() failed. this = " << this);
+						ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, &_detail_::_err_);
+						ssl = nullptr;
+					}
+				}
+				
+				print_cert_info(ssl, _detail_::_log_);
 			}
-			break;
+			
+			auto* dat = new server_client_data{ };
+			dat->socket = new_socket;
+			dat->ssl = ssl;
+			dat->serv = const_cast<server*>(this);
+			dat->address = inet_address(address);
+			dat->is_client_processing_ptr = &is_client_processing;
+			dat->thread_id = ++thread_id;
+			dat->threads_count = &++threads_count;
+			dat->process_function = process_function;
+			
+			LOG << color::green << "running client processing thread..." << ENDENT;
+			
+			pthread_t pthread;
+			pthread_create(&pthread, nullptr, process_client, (void*)dat);
+			::pthread_detach(pthread);
+			
+			LOG << color::green << "done." << ENDENT;
 		}
 		
-		log << "====== new connection ======\n socket = " << new_socket
-			<< "\n address = " << ::inet_ntoa(address.sin_addr)
-			<< "\n port = " << ::ntohs(address.sin_port)
-			<< "\n\n============================\n";
+		while (wait && threads_count > 0)
+		{
+			::usleep(10000);
+		}
 		
-		auto* dat = new server_client_data{ };
-		dat->socket                   = new_socket;
-		dat->serv                     = const_cast<server*>(this);
-		dat->address                  = address;
-		dat->is_client_processing_ptr = &is_client_processing;
-		dat->thread_id                = ++thread_id;
-		dat->threads_count            = &++threads_count;
-		dat->process_function         = process_function;
+		return true;
+	}
+
+#else
+	
+	inline bool server::run(bool wait) const
+	{
+		int threads_count          = 0, thread_id = 0;
 		
-		log << "running client processing thread...\n";
-
-		CreateThread(nullptr, 0, process_client, (void*)dat, 0, 0);
+		std::map<SOCKET, bool> is_client_processing;
+	
+		struct sockaddr_in address { };
+		int addrlen = sizeof(address);
+	
+		SOCKET new_socket;
 		
-		log << "done.\n";
-	}
+		while (true)
+		{
+			if (new_socket = ::accept(this->socket, (struct sockaddr*)&address, &addrlen); new_socket < 0)
+			{
+				ERROR("accept() failed with error " << GetLastError());
+				if (errno == EBADF || errno == EINVAL)
+				{
+					return false;
+				}
+				break;
+			}
+			
+			LOG << "====== new connection ======\n socket = " << new_socket
+				<< "\n address = " << ::inet_ntoa(address.sin_addr)
+				<< "\n port = " << ::ntohs(address.sin_port)
+				<< "\n\n============================\n";
+			
+			auto* dat = new server_client_data{ };
+			dat->socket                   = new_socket;
+			dat->serv                     = const_cast<server*>(this);
+			dat->address                  = address;
+			dat->is_client_processing_ptr = &is_client_processing;
+			dat->thread_id                = ++thread_id;
+			dat->threads_count            = &++threads_count;
+			dat->process_function         = process_function;
+			
+			LOG << "running client processing thread...\n";
 	
-	while (wait && threads_count > 0)
-	{
-		Sleep(10);
+			CreateThread(nullptr, 0, process_client, (void*)dat, 0, 0);
+			
+			LOG << "done.\n";
+		}
+		
+		while (wait && threads_count > 0)
+		{
+			Sleep(10);
+		}
+		
+		return true;
 	}
-	
-	return true;
-}
 
 #endif
 
 #if defined(linux)
-
-inline void* server::server_thread(void* args)
+	
+	inline void* server::server_thread(void* args)
 #else
-inline DWORD WINAPI server::server_thread(void* args)
+	inline DWORD WINAPI server::server_thread(void* args)
 #endif
-{
-	auto* server = static_cast<class server*>(args);
-	while (server->run(server->wait_for_child_threads))
-	{ }
-	--server::server_threads;
-#if defined(linux)
-	return new bool(true);
-#else
-	return 0;
-#endif
-}
-
-inline void server::run_server_thread(bool wait_for_child_threads = false)
-{
-	this->wait_for_child_threads = wait_for_child_threads;
-	++server::server_threads;
-#if defined(linux)
-	log << color::faint << color::yellow << "starting main server thread..." << log_console::l_endent;
-	pthread_create(&this->main_thread, nullptr, server_thread, static_cast<void*>(const_cast<server*>(this)));
-	pthread_detach(this->main_thread);
-	log << color::faint << color::yellow << "done." << log_console::l_endent;
-#else
-	log << "starting main server thread...\n";
-	this->main_thread = CreateThread(nullptr, 0, server_thread, static_cast<void*>(const_cast<server*>(this)), 0, 0);
-	log << "done.\n";
-#endif
-}
-
-inline void server::wait_for_all_servers()
-{
-	while (server::server_threads > 0)
 	{
+		auto* server = static_cast<class server*>(args);
+		while (server->run(server->wait_for_child_threads))
+		{ }
+		--server::server_threads;
 #if defined(linux)
-		::usleep(10000);
+		return new bool(true);
 #else
-		Sleep(10);
+		return 0;
 #endif
 	}
-}
+	
+	inline void server::run_server_thread(bool wait_for_child_threads = false)
+	{
+		this->wait_for_child_threads = wait_for_child_threads;
+		++server::server_threads;
+#if defined(linux)
+		LOG << color::faint << color::yellow << "starting main server thread..." << ENDENT;
+		pthread_create(&this->main_thread, nullptr, server_thread, static_cast<void*>(const_cast<server*>(this)));
+		pthread_detach(this->main_thread);
+		LOG << color::faint << color::yellow << "done." << ENDENT;
+#else
+		LOG << "starting main server thread...\n";
+		this->main_thread = CreateThread(nullptr, 0, server_thread, static_cast<void*>(const_cast<server*>(this)), 0, 0);
+		LOG << "done.\n";
+#endif
+	}
+	
+	inline void server::wait_for_all_servers()
+	{
+		while (server::server_threads > 0)
+		{
+#if defined(linux)
+			::usleep(10000);
+#else
+			Sleep(10);
+#endif
+		}
+	}
 
 #if defined(linux)
-
-inline void server::open_port_in_iptables(uint16_t port)
-{
-	if (!geteuid())
+	
+	inline void server::open_port_in_iptables(uint16_t port)
 	{
-		log << color::faint << color::green << "executing opening ports command..." << color::reset << log_console::l_endent;
-		std::string cmd("sudo iptables -A ");
-		system((cmd + "INPUT -p tcp --dport " + std::to_string(port) + " -j ACCEPT").c_str());
-		system((cmd + "OUTPUT -p tcp --dport " + std::to_string(port) + " -j ACCEPT").c_str());
-		log << color::faint << color::green << "executed." << color::reset << log_console::l_endent;
+		if (!geteuid())
+		{
+			LOG << color::faint << color::green << "executing opening ports command..." << ENDENT;
+			std::string cmd("sudo iptables -A ");
+			system((cmd + "INPUT -p tcp --dport " + std::to_string(port) + " -j ACCEPT").c_str());
+			system((cmd + "OUTPUT -p tcp --dport " + std::to_string(port) + " -j ACCEPT").c_str());
+			LOG << color::faint << color::green << "executed." << ENDENT;
+		}
 	}
-}
-
-inline void server::close_port_in_iptables(uint16_t port)
-{
-	if (!geteuid())
+	
+	inline void server::close_port_in_iptables(uint16_t port)
 	{
-		log << color::faint << color::green << "executing opening ports command..." << color::reset << log_console::l_endent;
-		std::string cmd("sudo iptables -D ");
-		system((cmd + "INPUT -p tcp --dport " + std::to_string(port) + " -j ACCEPT").c_str());
-		system((cmd + "OUTPUT -p tcp --dport " + std::to_string(port) + " -j ACCEPT").c_str());
-		log << color::faint << color::green << "executed." << color::reset << log_console::l_endent;
+		if (!geteuid())
+		{
+			LOG << color::faint << color::green << "executing opening ports command..." << ENDENT;
+			std::string cmd("sudo iptables -D ");
+			system((cmd + "INPUT -p tcp --dport " + std::to_string(port) + " -j ACCEPT").c_str());
+			system((cmd + "OUTPUT -p tcp --dport " + std::to_string(port) + " -j ACCEPT").c_str());
+			LOG << color::faint << color::green << "executed." << ENDENT;
+		}
 	}
-}
-
-struct ifreq& server::get_machine_ip(const char* interface_name)
-{
-	auto& result = *new ifreq{ };
-	int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
 	
-	result.ifr_ifru.ifru_addr.sa_family = AF_INET;
-	
-	/*eth0 - define the ifr_name - port name where network attached.*/
-	::memcpy(result.ifr_ifrn.ifrn_name, interface_name, IFNAMSIZ - 1);
-	
-	/*Accessing network interface information by passing address using ioctl.*/
-	::ioctl(fd, SIOCGIFADDR, &result);
-	
-	::close(fd);
-	return result;
-}
-
-inline std::vector<struct ifaddrs*>& server::list_all_network_interfaces()
-{
-	auto* result = new std::remove_cvref_t<decltype(list_all_network_interfaces())>();
-	
-	struct ifaddrs* ifaddr, * ifa;
-	
-	if (::getifaddrs(&ifaddr) == -1)
+	struct ifreq& server::get_machine_ip(const char* interface_name)
 	{
-		error("getifaddrs() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno));
+		auto& result = *new ifreq{ };
+		int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
+		
+		result.ifr_ifru.ifru_addr.sa_family = AF_INET;
+		
+		/*eth0 - define the ifr_name - port name where network attached.*/
+		::memcpy(result.ifr_ifrn.ifrn_name, interface_name, IFNAMSIZ - 1);
+		
+		/*Accessing network interface information by passing address using ioctl.*/
+		::ioctl(fd, SIOCGIFADDR, &result);
+		
+		::close(fd);
+		return result;
+	}
+	
+	inline std::vector<struct ifaddrs*>& server::list_all_network_interfaces()
+	{
+		auto* result = new std::remove_cvref_t<decltype(list_all_network_interfaces())>();
+		
+		struct ifaddrs* ifaddr, * ifa;
+		
+		if (::getifaddrs(&ifaddr) == -1)
+		{
+			ERROR("getifaddrs() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno));
+			return *result;
+		}
+		
+		/* Walk through linked list, maintaining head pointer so we
+		   can free list later */
+		for (ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next)
+		{
+			if (ifa->ifa_addr == nullptr || ifa->ifa_addr->sa_family != AF_PACKET) continue;
+			result->push_back(ifa);
+		}
 		return *result;
 	}
 	
-	/* Walk through linked list, maintaining head pointer so we
-	   can free list later */
-	for (ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next)
+	inline void* server::process_client(void* args)
 	{
-		if (ifa->ifa_addr == nullptr || ifa->ifa_addr->sa_family != AF_PACKET) continue;
-		result->push_back(ifa);
-	}
-	return *result;
-}
-
-inline void* server::process_client(void* args)
-{
-	pthread_mutex_lock(&mutex);
-	struct server_client_data& data = *static_cast<struct server_client_data*>(args);
-	int client_socket = data.socket;
-	log << color::green << "\nsocket : " << client_socket << log_console::l_endent;
-	if ((*data.is_client_processing_ptr)[client_socket])
-	{
+		pthread_mutex_lock(&mutex);
+		struct server_client_data& data = *static_cast<struct server_client_data*>(args);
+		int client_socket = data.socket;
+		LOG << color::green << "\nsocket : " << client_socket << ENDENT;
+		if ((*data.is_client_processing_ptr)[client_socket])
+		{
+			return nullptr;
+		}
+		(*data.is_client_processing_ptr)[client_socket] = true;
+		pthread_mutex_unlock(&mutex);
+		
+		LOG << color::green << "processing client...\n\tthread_no = " << data.thread_id << color::green << "; this = " << data.serv
+			<< ENDENT;
+		while (data.process_function(data.socket, data.ssl, data.address, data.serv))
+		{ }
+		LOG << color::green << "SSL_free()..." << ENDENT;
+		SSL_free(data.ssl);
+		LOG << color::faint << "job finished.\n\tthread_no = " << data.thread_id << ";" << ENDENT;
+		(*data.is_client_processing_ptr)[client_socket] = false;
+		--*data.threads_count;
 		return nullptr;
 	}
-	(*data.is_client_processing_ptr)[client_socket] = true;
-	pthread_mutex_unlock(&mutex);
 	
-	log << color::green << "processing client...\n\tthread_no = " << data.thread_id << color::green << "; this = " << data.serv
-		<< log_console::l_endent;
-	while (data.process_function(data.socket, data.ssl, data.address, data.serv))
-	{ }
-	log << color::green << "SSL_free()..." << color::reset << log_console::l_endent;
-	SSL_free(data.ssl);
-	log << color::faint << "job finished.\n\tthread_no = " << data.thread_id << ";" << color::reset << log_console::l_endent;
-	(*data.is_client_processing_ptr)[client_socket] = false;
-	--*data.threads_count;
-	return nullptr;
-}
-
-inline int server::get_socket() const
-{
-	return socket;
-}
+	inline int server::get_socket() const
+	{
+		return socket;
+	}
 
 #else
-
-inline DWORD WINAPI server::process_client(void* args)
-{
-	struct server_client_data& data = *static_cast<struct server_client_data*>(args);
-	SOCKET client_socket = data.socket;
-	log << "\nsocket : " << client_socket << "\n";
-	if ((*data.is_client_processing_ptr)[client_socket])
+	
+	inline DWORD WINAPI server::process_client(void* args)
 	{
+		struct server_client_data& data = *static_cast<struct server_client_data*>(args);
+		SOCKET client_socket = data.socket;
+		LOG << "\nsocket : " << client_socket << "\n";
+		if ((*data.is_client_processing_ptr)[client_socket])
+		{
+			return 0;
+		}
+		(*data.is_client_processing_ptr)[client_socket] = true;
+	
+		LOG << "processing client...\n\tthread_no = " << data.thread_id << ";\n";
+		while (data.process_function(data.socket, data.address, data.serv))
+		{
+		}
+		LOG << "job finished.\n\tthread_no = " << data.thread_id << ";\n";
 		return 0;
 	}
-	(*data.is_client_processing_ptr)[client_socket] = true;
-
-	log << "processing client...\n\tthread_no = " << data.thread_id << ";\n";
-	while (data.process_function(data.socket, data.address, data.serv))
+	
+	inline SOCKET server::get_socket() const
 	{
+		return socket;
 	}
-	log << "job finished.\n\tthread_no = " << data.thread_id << ";\n";
-	return 0;
-}
-
-inline SOCKET server::get_socket() const
-{
-	return socket;
-}
 
 #endif
-
-inline server::~server()
-{
+	
+	inline server::~server()
+	{
 #if defined(linux)
-	log << color::faint << color::yellow << "destruction of server(); this = " << this << color::reset << log_console::l_endent;
-	pthread_kill(this->main_thread, 0);
-	::close(this->socket);
-	SSL_CTX_free(this->ctx);
+		LOG << color::faint << color::yellow << "destruction of server(); this = " << this << ENDENT;
+		pthread_kill(this->main_thread, 0);
+		::close(this->socket);
+		SSL_CTX_free(this->ctx);
 #else
-	TerminateThread(this->main_thread, 0);
-	closesocket(this->socket);
-	WSACleanup();
+		TerminateThread(this->main_thread, 0);
+		closesocket(this->socket);
+		WSACleanup();
 #endif
-}
+	}
 
 // #definition-end server
 
-class inet_io
-{
-public:
-#if defined(linux)
-	
-	inline inet_io(int socket) : socket(socket), ssl(nullptr)
-	{ }
-	
-	inline inet_io(SSL* ssl) : socket(ssl ? SSL_get_fd(ssl) : -1), ssl(ssl)
-	{ }
-
-#else
-	
-	inline inet_io(SOCKET socket) : socket(socket)
-	{ }
-
-#endif
-
-#if defined(linux)
-	
-	template <size_t max_attempts = 0>
-	inline bool write(const void* data, size_t size);
-
-#else
-	
-	inline bool write(const char* data, size_t size);
-
-#endif
-
-#if defined(linux)
-	
-	inline ssize_t read(void* data, size_t size, bool non_block);
-	
-	[[nodiscard]] inline int get_socket() const;
-	
-	[[nodiscard]] inline SSL* get_ssl() const;
-
-#else
-	
-	inline size_t read(char* data, size_t size);
-
-	[[nodiscard]] inline SOCKET get_socket() const;
-
-#endif
-	
-	inline operator bool() const;
-
-#if defined(linux)
-	
-	static log_console log_;
-	static log_console err_;
-
-#endif
-
-protected:
-	template <send_datatype type>
-	friend inline inet_io& operator<<(inet_io& io, type data);
-	
-	template <receive_datatype type>
-	friend inline inet_io& operator>>(inet_io& io, type& data);
-
-#if defined(linux)
-	int socket;
-	SSL* ssl;
-#else
-	SOCKET socket;
-#endif
-	bool success = true;
-};
-
 // #definition-begin inet_io
-
 #if defined(linux)
-log_console inet_io::log_(stdout);
-log_console inet_io::err_(stderr);
-#endif
-
-#if defined(linux)
-
-template <size_t max_attempts>
-inline bool inet_io::write(const void* data, size_t size)
+	
+	template <size_t max_attempts>
+	inline bool inet_io::write(const void* data, size_t size)
 #else
-bool inet_io::write(const char* data, size_t size)
+	bool inet_io::write(const char* data, size_t size)
 #endif
-{
-	this->success = true;
+	{
+		this->success = true;
 
 #if defined(linux)
-	ssize_t wrote;
-	if (this->ssl)
-	{
-		wrote = SSL_write(this->ssl, data, size);
-		if (!wrote)
-		{
-			err << "this = " << this << color::reset << log_console::l_endent;
-			ERR_print_errors_cb(default_error_handler, &err_);
-		}
-	}
-	else
-	{
-		wrote = ::write(this->socket, data, size);
-	}
-	
-	if (wrote < 0)
-	{
-		goto fail;
-	}
-	
-	for (size_t attempt = 0; wrote < size && attempt < max_attempts; ++attempt)
-	{
-		log << color::faint << color::green << "wrote only " << wrote << color::green << "bytes of data - trying to write rest." << color::reset
-			<< log_console::l_endent;
-		*reinterpret_cast<const char**>(&data) += wrote;
-		size -= wrote;
+		ssize_t wrote;
 		if (this->ssl)
+		{
 			wrote = SSL_write(this->ssl, data, size);
+			if (!wrote)
+			{
+				ERR << "this = " << this << ENDENT;
+				ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, &_detail_::_err_);
+			}
+		}
 		else
+		{
 			wrote = ::write(this->socket, data, size);
+		}
 		
 		if (wrote < 0)
 		{
 			goto fail;
 		}
-	}
-	
-	if (wrote <= 0)
-	{
-		goto fail;
-	}
+		
+		for (size_t attempt = 0; wrote < size && attempt < max_attempts; ++attempt)
+		{
+			LOG << color::faint << color::green << "wrote only " << wrote << color::green << "bytes of data - trying to write rest." << ENDENT;
+			*reinterpret_cast<const char**>(&data) += wrote;
+			size -= wrote;
+			if (this->ssl)
+				wrote = SSL_write(this->ssl, data, size);
+			else
+				wrote = ::write(this->socket, data, size);
+			
+			if (wrote < 0)
+			{
+				goto fail;
+			}
+		}
+		
+		if (wrote <= 0)
+		{
+			goto fail;
+		}
 #else
-	int wrote = send(this->socket, data, size, 0);
-	if (wrote == SOCKET_ERROR)
-	{
-		error("send() failed with error: " << WSAGetLastError());
-		goto fail;
-	}
+		int wrote = send(this->socket, data, size, 0);
+		if (wrote == SOCKET_ERROR)
+		{
+			error("send() failed with error: " << WSAGetLastError());
+			goto fail;
+		}
 #endif
-	
-	this->success = wrote == size;
-	
-	return wrote == size;
+		
+		this->success = wrote == size;
+		
+		return wrote == size;
 
 fail:
 #if defined(linux)
-	err << "this = " << this << color::reset << log_console::l_endent;
-	if (this->ssl)
-		ERR_print_errors_cb(default_error_handler, &err_);
-	else
-		error("write() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno));
+		ERR << "this = " << this << ENDENT;
+		if (this->ssl)
+			ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, &_detail_::_err_);
+		else
+			ERROR("write() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno));
 #endif
-	this->success = false;
-	return false;
-}
+		this->success = false;
+		return false;
+	}
 
 #if defined(linux)
-
-inline ssize_t inet_io::read(void* data, size_t size, bool non_block = false)
-{
-	this->success = true;
-	int flags;
-	if (non_block)
+	
+	inline ssize_t inet_io::read(void* data, size_t size, bool non_block = false)
 	{
-		flags = fcntl(this->socket, F_GETFL, 0);
-		if (::fcntl(this->socket, F_SETFL, flags | O_NONBLOCK) < 0)
+		this->success = true;
+		int flags;
+		if (non_block)
 		{
-			error("fcntl() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
-									<< ". this = " << this);
-			this->success = false;
+			flags = fcntl(this->socket, F_GETFL, 0);
+			if (::fcntl(this->socket, F_SETFL, flags | O_NONBLOCK) < 0)
+			{
+				ERROR("fcntl() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
+										<< ". this = " << this);
+				this->success = false;
+			}
 		}
-	}
-	
-	ssize_t read;
-	if (this->ssl)
-		read = SSL_read(this->ssl, data, size);
-	else
-		read = ::read(this->socket, data, size);
-	
-	if (read <= 0)
-	{
-		err << "this = " << this << color::reset << log_console::l_endent;
+		
+		ssize_t read;
 		if (this->ssl)
-			ERR_print_errors_cb(default_error_handler, &err_);
+			read = SSL_read(this->ssl, data, size);
 		else
-			error("read() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno));
-		this->success = false;
-	}
-	
-	if (non_block)
-	{
-		if (::fcntl(this->socket, F_SETFL, flags))
+			read = ::read(this->socket, data, size);
+		
+		if (read <= 0)
 		{
-			error("fcntl() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
-									<< ". this = " << this);
+			ERR << "this = " << this << ENDENT;
+			if (this->ssl)
+				ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, &_detail_::_err_);
+			else
+				ERROR("read() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno));
 			this->success = false;
 		}
+		
+		if (non_block)
+		{
+			if (::fcntl(this->socket, F_SETFL, flags))
+			{
+				ERROR("fcntl() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
+										<< ". this = " << this);
+				this->success = false;
+			}
+		}
+		
+		return read;
 	}
-	
-	return read;
-}
-
-inline int inet_io::get_socket() const
-{
-	return socket;
-}
-
-inline SSL* inet_io::get_ssl() const
-{
-	return this->ssl;
-}
 
 #else
-
-inline size_t inet_io::read(char* data, size_t size)
-{
-	this->success = true;
-
-	int read = ::recv(this->socket, data, size, 0);
-	if (read <= 0)
+	
+	inline size_t inet_io::read(char* data, size_t size)
 	{
-		error("read() failed with error: " << GetLastError());
-		this->success = false;
-		return 0;
+		this->success = true;
+	
+		int read = ::recv(this->socket, data, size, 0);
+		if (read <= 0)
+		{
+			error("read() failed with error: " << GetLastError());
+			this->success = false;
+			return 0;
+		}
+	
+		return read;
 	}
-
-	return read;
-}
-
-inline SOCKET inet_io::get_socket() const
-{
-	return socket;
-}
+	
+	inline SOCKET inet_io::get_socket() const
+	{ return socket; }
 
 #endif
-
-inline inet_io::operator bool() const
-{
-	return this->success;
-}
-
-template <send_datatype type>
-inline inet_io& operator<<(inet_io& io, type data)
-{
-	if constexpr(std::is_same_v<std::remove_cvref_t<type>, const char*>)
+	
+	inline inet_io::operator bool() const
+	{ return this->success; }
+	
+	template <send_datatype type>
+	inline inet_io& operator<<(inet_io& io, type data)
 	{
-		io.write(data, strlen(data));
+		if constexpr(std::is_same_v<std::remove_cvref_t<type>, const char*>)
+			io.write(data, strlen(data));
+		else if constexpr(std::is_same_v<std::remove_cvref_t<type>, const wchar_t*>)
+			io.write(static_cast<const void*>(data), wcslen(data) * sizeof(*data));
+		else if constexpr(std::is_same_v<std::remove_cvref_t<type>, std::string> || std::is_same_v<std::remove_cvref_t<type>, std::wstring>)
+			io.write(static_cast<const void*>(data.c_str()), data.size() * sizeof(typename std::remove_cvref_t<type>::value_type));
+		else if constexpr(std::is_arithmetic_v<type>)
+			io.write(static_cast<const void*>(&data), sizeof(data));
+		else
+			static_cast<type>(new type); // invalid data type
+		
+		return io;
 	}
-	else if constexpr(std::is_same_v<std::remove_cvref_t<type>, const wchar_t*>)
+	
+	template <receive_datatype type>
+	inline inet_io& operator>>(inet_io& io, type& data)
 	{
-		io.write(static_cast<const void*>(data), wcslen(data) * sizeof(*data));
+		if constexpr(!std::is_const_v<type> && std::is_arithmetic_v<type>)
+			io.read(static_cast<void*>(&data), sizeof(data));
+		else
+			static_cast<type>(new type); // invalid data type
+		
+		return io;
 	}
-	else if constexpr(std::is_same_v<std::remove_cvref_t<type>, std::string> || std::is_same_v<std::remove_cvref_t<type>, std::wstring>)
-	{
-		io.write(static_cast<const void*>(data.c_str()), data.size() * sizeof(typename std::remove_cvref_t<type>::value_type));
-	}
-	else if constexpr(std::is_arithmetic_v<type>)
-	{
-		io.write(static_cast<const void*>(&data), sizeof(data));
-	}
-	else
-	{
-		static_cast<type>(new type); // invalid data type
-	}
-	return io;
-}
-
-template <receive_datatype type>
-inline inet_io& operator>>(inet_io& io, type& data)
-{
-	if constexpr(!std::is_const_v<type> && std::is_arithmetic_v<type>)
-	{
-		io.read(static_cast<void*>(&data), sizeof(data));
-	}
-	else
-	{
-		static_cast<type>(new type); // invalid data type
-	}
-	return io;
-}
 
 // #definition-end inet_io
-
-class client : public inet_io
-{
-public:
-#if defined(linux)
-	
-	inline client(const inet_address& server_address, bool ssl_connection, SSL* ssl, SSL_CTX* ctx);
-
-#else
-	inline client(const inet_address& server_address);
-#endif
-	
-	inline bool connect();
-	
-	[[nodiscard]] inline uint16_t get_port() const;
-	
-	[[nodiscard]] inline const inet_address& get_server_address() const;
-	
-	[[nodiscard]] SSL_CTX* get_ctx() const;
-	
-	inline ~client();
-
-private:
-	inet_address server_address;
-	SSL_CTX* ctx;
-};
 
 // #definition-begin client
 
 #if defined(linux)
-
-inline client::client(const inet_address& server_address, bool ssl_connection = false, SSL* ssl = nullptr, SSL_CTX* ctx = nullptr) :
-		inet_io(ssl), server_address(server_address)
-{
-	log << color::green << "socket init...\nserver address: " << color::yellow << this->server_address.get_address()
-		<< color::green << ";\nsocket family: " << this->server_address.get_family()
-		<< color::green << ";\nport = " << this->server_address.get_port() << color::green << ";"
-		<< color::reset << log_console::l_endent;
 	
-	
-	this->socket = ::socket(AF_INET, SOCK_STREAM, 0);
-	if (this->socket < 0)
+	inline client::client(const inet_address& server_address, bool ssl_connection = false, SSL* ssl = nullptr, SSL_CTX* ctx = nullptr) :
+			inet_io(ssl), server_address(server_address)
 	{
-		error("socket init failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
-									<< ". socket : " << socket << ". this = " << this);
-		return;
-	}
-	
-	this->ctx = ctx;
-	if (this->ctx == nullptr && ssl_connection) this->ctx = init_client_ctx();
-	
-	log << color::green << "success." << color::reset << log_console::l_endent;
-}
-
-#else
-
-inline client::client(const inet_address& server_address) :
-		server_address(server_address)
-{
-	log << "socket init...\nserver address: " << this->server_address.get_address()
-		<< ";\nsocket family: " << this->server_address.get_family()
-		<< ";\nport = " << this->server_address.get_port() << ";\n";
-	this->socket = ::socket(AF_INET, SOCK_STREAM, 0);
-	if (this->socket == INVALID_SOCKET)
-	{
-		error("socket init failed with error: " << GetLastError());
-		return;
-	}
-	
-	log << "success.\n";
-}
-
-#endif
-
-inline bool client::connect()
-{
-#if defined(linux)
-	log << color::green << "connecting..." << color::reset << log_console::l_endent;
-	
-	if (::connect(socket, (struct sockaddr*)&this->server_address, sizeof(this->server_address)) < 0)
-	{
-		error("connection failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno));
-		return false;
-	}
-	
-	if (!this->ssl && this->ctx)
-	{
-		log << color::green << "SSL_new()..." << color::reset << log_console::l_endent;
-		this->ssl = SSL_new(this->ctx);
-	}
-	
-	if (this->ssl)
-	{
-		SSL_set_fd(this->ssl, this->socket);
+		LOG << color::green << "socket init...\nserver address: " << color::yellow << this->server_address.get_address()
+			<< color::green << ";\nsocket family: " << this->server_address.get_family()
+			<< color::green << ";\nport = " << this->server_address.get_port() << color::green << ";"
+			<< ENDENT;
 		
-		log << color::green << "SSL_connect()..." << color::reset << log_console::l_endent;
 		
-		if (SSL_connect(ssl) <= 0)
+		this->socket = ::socket(AF_INET, SOCK_STREAM, 0);
+		if (this->socket < 0)
 		{
-			err << "this = " << this << color::reset << log_console::l_endent;
-			ERR_print_errors_cb(default_error_handler, &err_);
-			this->ssl = nullptr;
+			ERROR("socket init failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
+										<< ". socket : " << socket << ". this = " << this);
+			return;
 		}
 		
-		print_cert_info(ssl, client::log_);
+		this->ctx = ctx;
+		if (this->ctx == nullptr && ssl_connection) this->ctx = init_client_ctx();
+		
+		LOG << color::green << "success." << ENDENT;
+	}
+
+#else
+	
+	inline client::client(const inet_address& server_address) :
+			server_address(server_address)
+	{
+		LOG << "socket init...\nserver address: " << this->server_address.get_address()
+			<< ";\nsocket family: " << this->server_address.get_family()
+			<< ";\nport = " << this->server_address.get_port() << ";\n";
+		this->socket = ::socket(AF_INET, SOCK_STREAM, 0);
+		if (this->socket == INVALID_SOCKET)
+		{
+			error("socket init failed with error: " << GetLastError());
+			return;
+		}
+		
+		LOG << "success.\n";
+	}
+
+#endif
+	
+	inline bool client::connect()
+	{
+#if defined(linux)
+		LOG << color::green << "connecting..." << ENDENT;
+		
+		if (::connect(socket, (struct sockaddr*)&this->server_address, sizeof(this->server_address)) < 0)
+		{
+			ERROR("connection failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno));
+			return false;
+		}
+		
+		if (!this->ssl && this->ctx)
+		{
+			LOG << color::green << "SSL_new()..." << ENDENT;
+			this->ssl = SSL_new(this->ctx);
+		}
+		
+		if (this->ssl)
+		{
+			SSL_set_fd(this->ssl, this->socket);
+			
+			LOG << color::green << "SSL_connect()..." << ENDENT;
+			
+			if (SSL_connect(ssl) <= 0)
+			{
+				ERR << "this = " << this << ENDENT;
+				ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, &_detail_::_err_);
+				this->ssl = nullptr;
+			}
+			
+			print_cert_info(ssl, _detail_::_log_);
+		}
+		
+		LOG << color::green << "success." << ENDENT;
+#else
+		LOG << "connecting...\n";
+		if (::connect(socket, (struct sockaddr*)&this->server_address, sizeof(this->server_address)) == SOCKET_ERROR)
+		{
+			error("connect() failed with error: " << GetLastError());
+			closesocket(socket);
+			socket = INVALID_SOCKET;
+			return false;
+		}
+	
+		LOG << "success.\n";
+#endif
+		return true;
 	}
 	
-	log << color::green << "success." << color::reset << log_console::l_endent;
-#else
-	log << "connecting...\n";
-	if (::connect(socket, (struct sockaddr*)&this->server_address, sizeof(this->server_address)) == SOCKET_ERROR)
+	inline client::~client()
 	{
-		error("connect() failed with error: " << GetLastError());
-		closesocket(socket);
-		socket = INVALID_SOCKET;
-		return false;
+#if defined(linux)
+		LOG << color::faint << color::yellow << "destruction of client(); this = " << this << ENDENT;
+		::close(this->socket);
+		SSL_free(this->ssl);
+#else
+		closesocket(this->socket);
+#endif
 	}
 
-	log << "success.\n";
-#endif
-	return true;
-}
-
-inline uint16_t client::get_port() const
-{
-	return this->server_address.get_port();
-}
-
-#if defined(linux)
-
-inline const inet_address& client::get_server_address() const
-{
-	return server_address;
-}
-
-inline SSL_CTX* client::get_ctx() const
-{
-	return this->ctx;
-}
-
-#endif
-
-inline client::~client()
-{
-#if defined(linux)
-	log << color::faint << color::yellow << "destruction of client(); this = " << this << color::reset << log_console::l_endent;
-	::close(this->socket);
-	SSL_free(this->ssl);
-#else
-	closesocket(this->socket);
-#endif
-}
-
 // #definition-end client
+}
 
 #endif // INET_COMM_INET_COMM_
