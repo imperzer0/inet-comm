@@ -1,7 +1,7 @@
 pkgname="inet-comm"
 epoch=2
 pkgver=4
-pkgrel=0
+pkgrel=1
 pkgdesc="ipv4 internet tcp socket c++ library"
 arch=("x86_64")
 url="https://github.com/imperzer0/inet-comm"

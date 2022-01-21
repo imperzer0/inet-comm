@@ -265,6 +265,7 @@ namespace inetio
 			if (pos == std::string::npos)
 			{
 				addr.set_address(AF_INET, address.c_str());
+				addr.set_port(default_port);
 			}
 			else
 			{
@@ -294,8 +295,15 @@ namespace inetio
 			else
 			{
 				addr.set_address(AF_INET6, address.substr(0, pos).c_str() + shift);
-				if (shift) ++pos;
-				addr.set_port(std::stoul(address.substr(pos, address.size() - pos)));
+				if (shift) ++ ++pos;
+				if (pos < address.size())
+				{
+					addr.set_port(std::stoul(address.substr(pos, address.size() - pos)));
+				}
+				else
+				{
+					addr.set_port(default_port);
+				}
 			}
 			return addr;
 		}
