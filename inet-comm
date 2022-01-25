@@ -315,7 +315,7 @@ namespace inetio
 		{ return ::ntohs(this->address.sin_port); }
 		
 		[[nodiscard]] inline sa_family_t get_family() const
-		{ return ::ntohs(this->address.sin_port); }
+		{ return this->address.sin_family; }
 		
 		[[nodiscard]] inline sockaddr_in get_raw() const
 		{ return this->address; }
