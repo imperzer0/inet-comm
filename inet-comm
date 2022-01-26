@@ -76,7 +76,7 @@ namespace inetio
 	template <typename type>
 	concept receive_datatype = !std::is_const_v<type> && std::is_arithmetic_v<type>;
 	
-	inline static SSL_CTX* init_server_ctx(const SSL_METHOD* method = DTLS_server_method())
+	inline static SSL_CTX* init_server_ctx(const SSL_METHOD* method = DTLSv1_2_server_method())
 	{
 		SSL_CTX* ctx;
 		
@@ -95,7 +95,7 @@ namespace inetio
 		return ctx;
 	}
 	
-	inline static SSL_CTX* init_client_ctx(const SSL_METHOD* method = DTLS_client_method())
+	inline static SSL_CTX* init_client_ctx(const SSL_METHOD* method = DTLSv1_2_client_method())
 	{
 		SSL_CTX* ctx;
 		
@@ -148,8 +148,8 @@ namespace inetio
 		}
 		
 		///New lines - Force the client-side have a certificate
-		SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, nullptr);
-		SSL_CTX_set_verify_depth(ctx, 4);
+//		SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, nullptr);
+//		SSL_CTX_set_verify_depth(ctx, 4);
 		///End new lines
 		return true;
 	}
