@@ -167,7 +167,7 @@ namespace inetio
 			PRINTLN(stream, "Subject: " << color::blue << line);
 			delete[] line;
 			line = X509_NAME_oneline(X509_get_issuer_name(cert), nullptr, 0);
-			PRINT(stream, "Issuer: " << color::blue << line);
+			PRINTLN(stream, "Issuer: " << color::blue << line);
 			delete[] line;
 			X509_free(cert);
 		}
