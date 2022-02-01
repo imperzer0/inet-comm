@@ -176,6 +176,91 @@ namespace inetio
 			PRINTLN(stream, "No certificates.");
 		}
 	}
+	
+	inline static void open_port_in_iptables(uint16_t port)
+	{
+		if (!geteuid())
+		{
+			LOG << color::faint << color::green << "executing opening ports command..." << ENDENT;
+			std::string cmd("sudo iptables -A ");
+			system((cmd + "INPUT -p tcp --dport " + std::to_string(port) + " -j ACCEPT").c_str());
+			system((cmd + "OUTPUT -p tcp --dport " + std::to_string(port) + " -j ACCEPT").c_str());
+			LOG << color::faint << color::green << "executed." << ENDENT;
+		}
+	}
+	
+	inline static void close_port_in_iptables(uint16_t port)
+	{
+		if (!geteuid())
+		{
+			LOG << color::faint << color::green << "executing opening ports command..." << ENDENT;
+			std::string cmd("sudo iptables -D ");
+			system((cmd + "INPUT -p tcp --dport " + std::to_string(port) + " -j ACCEPT").c_str());
+			system((cmd + "OUTPUT -p tcp --dport " + std::to_string(port) + " -j ACCEPT").c_str());
+			LOG << color::faint << color::green << "executed." << ENDENT;
+		}
+	}
+	
+	inline static struct ifreq& get_interface_information(const char* interface_name)
+	{
+		auto& result = *new ifreq{ };
+		int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
+		
+		result.ifr_ifru.ifru_addr.sa_family = AF_INET;
+		result.ifr_ifru.ifru_broadaddr.sa_family = AF_INET;
+		result.ifr_ifru.ifru_dstaddr.sa_family = AF_INET;
+		result.ifr_ifru.ifru_hwaddr.sa_family = AF_INET;
+		result.ifr_ifru.ifru_netmask.sa_family = AF_INET;
+		
+		/*eth0 - define the ifr_name - port name where network attached.*/
+		::memcpy(result.ifr_ifrn.ifrn_name, interface_name, IFNAMSIZ - 1);
+		
+		/*Accessing network interface information by passing address using ioctl.*/
+		::ioctl(fd, SIOCGIFADDR, &result);
+		::ioctl(fd, SIOCGIFBR, &result);
+		::ioctl(fd, SIOCGIFBRDADDR, &result);
+		::ioctl(fd, SIOCGIFCONF, &result);
+		::ioctl(fd, SIOCGIFCOUNT, &result);
+		::ioctl(fd, SIOCGIFDSTADDR, &result);
+		::ioctl(fd, SIOCGIFENCAP, &result);
+		::ioctl(fd, SIOCGIFFLAGS, &result);
+		::ioctl(fd, SIOCGIFHWADDR, &result);
+		::ioctl(fd, SIOCGIFINDEX, &result);
+		::ioctl(fd, SIOCGIFMAP, &result);
+		::ioctl(fd, SIOCGIFMEM, &result);
+		::ioctl(fd, SIOCGIFMETRIC, &result);
+		::ioctl(fd, SIOCGIFMTU, &result);
+		::ioctl(fd, SIOCGIFNAME, &result);
+		::ioctl(fd, SIOCGIFNETMASK, &result);
+		::ioctl(fd, SIOCGIFPFLAGS, &result);
+		::ioctl(fd, SIOCGIFSLAVE, &result);
+		::ioctl(fd, SIOCGIFTXQLEN, &result);
+		
+		::close(fd);
+		return result;
+	}
+	
+	inline static std::vector<struct ifaddrs*>& list_all_network_interfaces()
+	{
+		auto* result = new std::remove_cvref_t<decltype(list_all_network_interfaces())>();
+		
+		struct ifaddrs* ifaddr, * ifa;
+		
+		if (::getifaddrs(&ifaddr) == -1)
+		{
+			ERROR("getifaddrs() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno));
+			return *result;
+		}
+		
+		/* Walk through linked list, maintaining head pointer so we
+		   can free list later */
+		for (ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next)
+		{
+			if (ifa->ifa_addr == nullptr || ifa->ifa_addr->sa_family != AF_PACKET) continue;
+			result->push_back(ifa);
+		}
+		return *result;
+	}
 
 #else
 
@@ -395,14 +480,6 @@ namespace inetio
 		inline static void wait_for_all_servers();
 
 #if defined(linux)
-		
-		inline static void open_port_in_iptables(uint16_t port);
-		
-		inline static void close_port_in_iptables(uint16_t port);
-		
-		inline static struct ifreq& get_machine_ip(const char* interface_name);
-		
-		inline static std::vector<struct ifaddrs*>& list_all_network_interfaces();
 		
 		[[nodiscard]] int get_socket() const;
 
@@ -872,69 +949,6 @@ namespace inetio
 	}
 
 #if defined(linux)
-	
-	inline void server::open_port_in_iptables(uint16_t port)
-	{
-		if (!geteuid())
-		{
-			LOG << color::faint << color::green << "executing opening ports command..." << ENDENT;
-			std::string cmd("sudo iptables -A ");
-			system((cmd + "INPUT -p tcp --dport " + std::to_string(port) + " -j ACCEPT").c_str());
-			system((cmd + "OUTPUT -p tcp --dport " + std::to_string(port) + " -j ACCEPT").c_str());
-			LOG << color::faint << color::green << "executed." << ENDENT;
-		}
-	}
-	
-	inline void server::close_port_in_iptables(uint16_t port)
-	{
-		if (!geteuid())
-		{
-			LOG << color::faint << color::green << "executing opening ports command..." << ENDENT;
-			std::string cmd("sudo iptables -D ");
-			system((cmd + "INPUT -p tcp --dport " + std::to_string(port) + " -j ACCEPT").c_str());
-			system((cmd + "OUTPUT -p tcp --dport " + std::to_string(port) + " -j ACCEPT").c_str());
-			LOG << color::faint << color::green << "executed." << ENDENT;
-		}
-	}
-	
-	struct ifreq& server::get_machine_ip(const char* interface_name)
-	{
-		auto& result = *new ifreq{ };
-		int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
-		
-		result.ifr_ifru.ifru_addr.sa_family = AF_INET;
-		
-		/*eth0 - define the ifr_name - port name where network attached.*/
-		::memcpy(result.ifr_ifrn.ifrn_name, interface_name, IFNAMSIZ - 1);
-		
-		/*Accessing network interface information by passing address using ioctl.*/
-		::ioctl(fd, SIOCGIFADDR, &result);
-		
-		::close(fd);
-		return result;
-	}
-	
-	inline std::vector<struct ifaddrs*>& server::list_all_network_interfaces()
-	{
-		auto* result = new std::remove_cvref_t<decltype(list_all_network_interfaces())>();
-		
-		struct ifaddrs* ifaddr, * ifa;
-		
-		if (::getifaddrs(&ifaddr) == -1)
-		{
-			ERROR("getifaddrs() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno));
-			return *result;
-		}
-		
-		/* Walk through linked list, maintaining head pointer so we
-		   can free list later */
-		for (ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next)
-		{
-			if (ifa->ifa_addr == nullptr || ifa->ifa_addr->sa_family != AF_PACKET) continue;
-			result->push_back(ifa);
-		}
-		return *result;
-	}
 	
 	inline void* server::process_client(void* args)
 	{
