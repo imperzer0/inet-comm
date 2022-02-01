@@ -201,40 +201,83 @@ namespace inetio
 		}
 	}
 	
-	inline static struct ifreq& get_interface_information(const char* interface_name)
+	typedef struct ifinfo
 	{
-		auto& result = *new ifreq{ };
-		int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
+		struct sockaddr if_addr = {AF_INET};
+		struct sockaddr if_broadaddr = {AF_INET};
+		struct sockaddr if_dstaddr = {AF_INET};
+		struct sockaddr if_hwaddr = {0};
+		struct sockaddr if_netmask = {AF_INET};
+		struct ifmap if_map = { };
+		char if_name[IFNAMSIZ]{ };
+		short int if_flags;
+		int if_index;
+		int if_mtu;
+	} ifinfo, * pifinfo;
+	
+	inline static struct ifinfo& get_interface_information(const char* interface_name)
+	{
+		auto& result = *new ifinfo{ };
+		int fd = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
 		
-		result.ifr_ifru.ifru_addr.sa_family = AF_INET;
-		result.ifr_ifru.ifru_broadaddr.sa_family = AF_INET;
-		result.ifr_ifru.ifru_dstaddr.sa_family = AF_INET;
-		result.ifr_ifru.ifru_hwaddr.sa_family = AF_INET;
-		result.ifr_ifru.ifru_netmask.sa_family = AF_INET;
+		/*define the ifr_name - port name where network attached*/
+		::memcpy(result.if_name, interface_name, IFNAMSIZ - 1);
 		
-		/*eth0 - define the ifr_name - port name where network attached.*/
-		::memcpy(result.ifr_ifrn.ifrn_name, interface_name, IFNAMSIZ - 1);
+		struct ifreq tmp;
 		
-		/*Accessing network interface information by passing address using ioctl.*/
-		::ioctl(fd, SIOCGIFADDR, &result);
-		::ioctl(fd, SIOCGIFBR, &result);
-		::ioctl(fd, SIOCGIFBRDADDR, &result);
-		::ioctl(fd, SIOCGIFCONF, &result);
-		::ioctl(fd, SIOCGIFCOUNT, &result);
-		::ioctl(fd, SIOCGIFDSTADDR, &result);
-		::ioctl(fd, SIOCGIFENCAP, &result);
-		::ioctl(fd, SIOCGIFFLAGS, &result);
-		::ioctl(fd, SIOCGIFHWADDR, &result);
-		::ioctl(fd, SIOCGIFINDEX, &result);
-		::ioctl(fd, SIOCGIFMAP, &result);
-		::ioctl(fd, SIOCGIFMEM, &result);
-		::ioctl(fd, SIOCGIFMETRIC, &result);
-		::ioctl(fd, SIOCGIFMTU, &result);
-		::ioctl(fd, SIOCGIFNAME, &result);
-		::ioctl(fd, SIOCGIFNETMASK, &result);
-		::ioctl(fd, SIOCGIFPFLAGS, &result);
-		::ioctl(fd, SIOCGIFSLAVE, &result);
-		::ioctl(fd, SIOCGIFTXQLEN, &result);
+		/*address of the device using*/
+		tmp = { };
+		::memcpy(tmp.ifr_name, interface_name, IFNAMSIZ - 1);
+		::ioctl(fd, SIOCGIFADDR, &tmp);
+		::memcpy(result.if_addr.sa_data, tmp.ifr_addr.sa_data, 14);
+		
+		/*broadcast address for a device*/
+		tmp = { };
+		::memcpy(tmp.ifr_name, interface_name, IFNAMSIZ - 1);
+		::ioctl(fd, SIOCGIFBRDADDR, &tmp);
+		::memcpy(result.if_broadaddr.sa_data, tmp.ifr_broadaddr.sa_data, 14);
+		
+		/*destination address of a point-to-point device*/
+		tmp = { };
+		::memcpy(tmp.ifr_name, interface_name, IFNAMSIZ - 1);
+		::ioctl(fd, SIOCGIFDSTADDR, &tmp);
+		::memcpy(result.if_dstaddr.sa_data, tmp.ifr_dstaddr.sa_data, 14);
+		
+		/*active flag word of the device*/
+		tmp = { };
+		::memcpy(tmp.ifr_name, interface_name, IFNAMSIZ - 1);
+		::ioctl(fd, SIOCGIFFLAGS, &tmp);
+		result.if_flags = tmp.ifr_flags;
+		
+		/*hardware (MAC) address*/
+		tmp = { };
+		::memcpy(tmp.ifr_name, interface_name, IFNAMSIZ - 1);
+		::ioctl(fd, SIOCGIFHWADDR, &tmp);
+		::memcpy(result.if_hwaddr.sa_data, tmp.ifr_hwaddr.sa_data, 14);
+		
+		/*index of the interface*/
+		tmp = { };
+		::memcpy(tmp.ifr_name, interface_name, IFNAMSIZ - 1);
+		::ioctl(fd, SIOCGIFINDEX, &tmp);
+		result.if_index = tmp.ifr_ifindex;
+		
+		/*interface's hardware parameters*/
+		tmp = { };
+		::memcpy(tmp.ifr_name, interface_name, IFNAMSIZ - 1);
+		::ioctl(fd, SIOCGIFMAP, &tmp);
+		result.if_map = tmp.ifr_map;
+		
+		/*MTU (Maximum Transfer Unit) of a device*/
+		tmp = { };
+		::memcpy(tmp.ifr_name, interface_name, IFNAMSIZ - 1);
+		::ioctl(fd, SIOCGIFMTU, &tmp);
+		result.if_mtu = tmp.ifr_mtu;
+		
+		/*network mask for a device*/
+		tmp = { };
+		::memcpy(tmp.ifr_name, interface_name, IFNAMSIZ - 1);
+		::ioctl(fd, SIOCGIFNETMASK, &tmp);
+		::memcpy(result.if_netmask.sa_data, tmp.ifr_netmask.sa_data, 14);
 		
 		::close(fd);
 		return result;
