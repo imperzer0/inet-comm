@@ -210,9 +210,9 @@ namespace inetio
 		struct sockaddr if_netmask = {AF_INET};
 		struct ifmap if_map = { };
 		char if_name[IFNAMSIZ]{ };
-		short int if_flags;
-		int if_index;
-		int if_mtu;
+		short int if_flags = 0;
+		int if_index = -1;
+		int if_mtu = -1;
 	} ifinfo, * pifinfo;
 	
 	inline static struct ifinfo& get_interface_information(const char* interface_name)
@@ -223,7 +223,7 @@ namespace inetio
 		/*define the ifr_name - port name where network attached*/
 		::memcpy(result.if_name, interface_name, IFNAMSIZ - 1);
 		
-		struct ifreq tmp;
+		struct ifreq tmp{ };
 		
 		/*address of the device using*/
 		tmp = { };
@@ -656,7 +656,9 @@ namespace inetio
 		inline client(const inet_address& server_address, bool ssl_connection, SSL* ssl, SSL_CTX* ctx);
 
 #else
+		
 		inline client(const inet_address& server_address);
+
 #endif
 		
 		inline bool connect();
@@ -750,8 +752,8 @@ namespace inetio
 
 #else
 	
-	inline server::server(int max_clients, const inet_address& address, client_process_function process_function, void* extra) :
-			max_clients(max_clients), address(address), process_function(process_function), extra(extra)
+	inline server::server(int max_clients, const inet_address& address, client_process_function process_function, void* extra)
+			: max_clients(max_clients), address(address), process_function(process_function), extra(extra)
 	{
 		LOG << "winsock lib init...\n";
 	
@@ -893,11 +895,11 @@ namespace inetio
 	
 	inline bool server::run(bool wait) const
 	{
-		int threads_count          = 0, thread_id = 0;
+		int threads_count = 0, thread_id = 0;
 		
 		std::map<SOCKET, bool> is_client_processing;
-	
-		struct sockaddr_in address { };
+		
+		struct sockaddr_in address{ };
 		int addrlen = sizeof(address);
 	
 		SOCKET new_socket;
@@ -1035,11 +1037,10 @@ namespace inetio
 			return 0;
 		}
 		(*data.is_client_processing_ptr)[client_socket] = true;
-	
+		
 		LOG << "processing client...\n\tthread_no = " << data.thread_id << ";\n";
 		while (data.process_function(data.socket, data.address, data.serv))
-		{
-		}
+		{ }
 		LOG << "job finished.\n\tthread_no = " << data.thread_id << ";\n";
 		return 0;
 	}
@@ -1094,6 +1095,8 @@ namespace inetio
 			wrote = ::write(this->socket, data, size);
 		}
 		
+		auto* data_iter = reinterpret_cast<const char*>(data);
+		
 		if (wrote < 0)
 		{
 			goto fail;
@@ -1102,12 +1105,13 @@ namespace inetio
 		for (size_t attempt = 0; wrote < size && attempt < max_attempts; ++attempt)
 		{
 			LOG << color::faint << color::green << "wrote only " << wrote << color::green << "bytes of data - trying to write rest." << ENDENT;
-			*reinterpret_cast<const char**>(&data) += wrote;
+			data_iter += wrote;
 			size -= wrote;
+			size_t local_wrote;
 			if (this->ssl)
-				wrote = SSL_write(this->ssl, data, size);
+				wrote = SSL_write(this->ssl, data_iter, size);
 			else
-				wrote = ::write(this->socket, data, size);
+				wrote = ::write(this->socket, data_iter, size);
 			
 			if (wrote < 0)
 			{
@@ -1162,6 +1166,7 @@ fail:
 		}
 		
 		ssize_t read;
+read_again:
 		if (this->ssl)
 			read = SSL_read(this->ssl, data, size);
 		else
@@ -1170,10 +1175,28 @@ fail:
 		if (read <= 0)
 		{
 			ERR << "this = " << this << ENDENT;
+			
+			if (non_block)
+			{
+				if (::fcntl(this->socket, F_SETFL, flags))
+				{
+					ERROR("fcntl() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset
+											<< color::red << ". this = " << this);
+					this->success = false;
+				}
+			}
+			
 			if (this->ssl)
+			{
+				if (ERR_get_error() == SSL_ERROR_WANT_READ) goto read_again;
 				ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, &_detail_::_err_);
+			}
 			else
+			{
+				if (errno == EINPROGRESS) goto read_again;
 				ERROR("read() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno));
+			}
+			
 			this->success = false;
 		}
 		
