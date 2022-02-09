@@ -255,7 +255,7 @@ namespace inetio
 	
 	inline bool write_certificate_to_disk(
 			std::string& error, EVP_PKEY* pkey, X509* x509,
-			const char* key_filename = "key.pem", const char* x509_filename = "certificate.pem")
+			const char* key_filename = "certificate.key", const char* x509_filename = "certificate.pem")
 	{
 		/* Open the PEM file for writing the key to disk. */
 		FILE* pkey_file = ::fopen(key_filename, "wb");
