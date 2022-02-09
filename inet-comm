@@ -5,58 +5,67 @@
 #ifndef INET_COMM_INET_COMM_
 #define INET_COMM_INET_COMM_
 
-#if defined(linux)
+# if defined(linux)
 
-#include <cassert>
-#include <thread>
-#include <sys/socket.h>
-#include <arpa/inet.h>
-#include <csignal>
-#include <net/if.h>
-#include <sys/ioctl.h>
-#include <sys/fcntl.h>
-#include <log-console>
-#include <ifaddrs.h>
-#include <openssl/ssl.h>
-#include <openssl/err.h>
+#  include <cassert>
+#  include <thread>
+#  include <sys/socket.h>
+#  include <arpa/inet.h>
+#  include <csignal>
+#  include <net/if.h>
+#  include <sys/ioctl.h>
+#  include <sys/fcntl.h>
+#  include <log-console>
+#  include <ifaddrs.h>
+#  include <openssl/ssl.h>
+#  include <openssl/err.h>
 
-#define LOG_PREFIX log_console::l_lock << log_console::l_localtime << l_location
-#define ERR_PREFIX log_console::l_lock << log_console::l_localtime << l_location
+#  define LOG_PREFIX log_console::l_lock << log_console::l_localtime << l_location
+#  define ERR_PREFIX log_console::l_lock << log_console::l_localtime << l_location
 
-#define LOG (_detail_::_log_ << LOG_PREFIX)
-#define ERR (_detail_::_err_ << ERR_PREFIX)
-#define ENDENT color::reset << log_console::l_endent
+#  define LOG (_detail_::_log_ << LOG_PREFIX)
+#  define ERR (_detail_::_err_ << ERR_PREFIX)
+#  define ENDENT color::reset << log_console::l_endent
 
-#define ERROR(message) (ERR << color::red << color::bold << "error" << color::reset << " : " << color::red << color::italic << message << color::reset << color::red << "." << ENDENT)
-#define FATAL_ERROR(message) ERROR(message); throw std::runtime_error(message)
-#define PRINT(stream, message) ((stream) << LOG_PREFIX << color::yellow << color::italic << message << color::reset << log_console::l_unlock)
-#define PRINTLN(stream, message) ((stream) << LOG_PREFIX << color::yellow << color::italic << message << ENDENT)
+#  define ERROR(message) (ERR << color::red << color::bold << "error" << color::reset << " : " << color::red << color::italic << message << color::reset << color::red << "." << ENDENT)
+#  define FATAL_ERROR(message) ERROR(message); throw std::runtime_error(message)
+#  define PRINT(stream, message) ((stream) << LOG_PREFIX << color::yellow << color::italic << message << color::reset << log_console::l_unlock)
+#  define PRINTLN(stream, message) ((stream) << LOG_PREFIX << color::yellow << color::italic << message << ENDENT)
 
-#define DEFAULT_ERROR_HANDLER [](const char* str, size_t size, void* err_stream) { *static_cast<log_console*>(err_stream) << ERR_PREFIX << color::red << str << ENDENT; return 0; }
+#  define DEFAULT_ERROR_HANDLER [](const char* str, size_t size, void* err_stream) { *static_cast<log_console*>(err_stream) << ERR_PREFIX << color::red << str << ENDENT; return 0; }
 
-#else
+# else
 
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
+#  ifndef WIN32_LEAN_AND_MEAN
+#   define WIN32_LEAN_AND_MEAN
+#  endif
 
-#define _WINSOCK_DEPRECATED_NO_WARNINGS
-#define _CRT_SECURE_NO_WARNINGS
+#  define _WINSOCK_DEPRECATED_NO_WARNINGS
+#  define _CRT_SECURE_NO_WARNINGS
 
-#include <windows.h>
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <iphlpapi.h>
-#include <stdio.h>
+#  include <windows.h>
+#  include <winsock2.h>
+#  include <ws2tcpip.h>
+#  include <iphlpapi.h>
+#  include <stdio.h>
 
-#pragma comment(lib, "Ws2_32.lib")
+#  pragma comment(lib, "Ws2_32.lib")
 
-#endif
+#  define LOG std::cout
+#  define ERR std::cerr
 
-#include <cstring>
-#include <iostream>
-#include <map>
-#include <vector>
+#  define ERROR(message) (ERR << "error" << " : " << message << "\n")
+#  define FATAL_ERROR(message) error(message); throw std::runtime_error(message)
+	
+	typedef decltype(in_addr::S_un.S_addr) in_addr_t;
+	typedef ADDRESS_FAMILY sa_family_t;
+
+# endif
+
+# include <cstring>
+# include <iostream>
+# include <map>
+# include <list>
 
 namespace inetio
 {
@@ -65,7 +74,7 @@ namespace inetio
 		static log_console _log_(stdout);
 		static log_console _err_(stderr);
 
-#if defined(linux)
+# if defined(linux)
 		
 		inline static SSL_CTX* init_server_ctx(const SSL_METHOD* method = DTLSv1_2_server_method())
 		{
@@ -168,10 +177,10 @@ namespace inetio
 			}
 		}
 
-#endif
+# endif
 	}
 
-#if defined(linux)
+# if defined(linux)
 	
 	template <typename type>
 	concept send_datatype = std::is_same_v<std::remove_reference_t<type>, const char*> || std::is_same_v<std::remove_cvref_t<type>, const wchar_t*> ||
@@ -406,7 +415,7 @@ namespace inetio
 		return result;
 	}
 	
-	inline static std::vector<struct ifaddrs*>& list_all_network_interfaces()
+	inline static std::list<struct ifaddrs*>& list_all_network_interfaces()
 	{
 		auto* result = new std::remove_cvref_t<decltype(list_all_network_interfaces())>();
 		
@@ -418,8 +427,7 @@ namespace inetio
 			return *result;
 		}
 		
-		/* Walk through linked list, maintaining head pointer so we
-		   can free list later */
+		/* Walk through linked list, maintaining head pointer so we can free list later */
 		for (ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next)
 		{
 			if (ifa->ifa_addr == nullptr || ifa->ifa_addr->sa_family != AF_PACKET) continue;
@@ -428,18 +436,7 @@ namespace inetio
 		return *result;
 	}
 
-#else
-
-#define LOG std::cout
-#define ERR std::cerr
-
-#define ERROR(message) (ERR << "error" << " : " << message << "\n")
-#define FATAL_ERROR(message) error(message); throw std::runtime_error(message)
-	
-	typedef decltype(in_addr::S_un.S_addr) in_addr_t;
-	typedef ADDRESS_FAMILY sa_family_t;
-
-#endif
+# endif
 	
 	inline in_addr_t inet_pton(sa_family_t af, const char* address)
 	{
@@ -448,7 +445,7 @@ namespace inetio
 		return ret;
 	}
 
-#if defined(linux)
+# if defined(linux)
 	
 	class suppress_signal
 	{
@@ -475,13 +472,13 @@ namespace inetio
 		static log_console _err_;
 	};
 
-// #definition-begin suppress_signal
+// # definition-begin suppress_signal
 	
 	log_console suppress_signal::_log_(stdout);
 	log_console suppress_signal::_err_(stderr);
 
-// #definition-end suppress_signal
-#endif
+// # definition-end suppress_signal
+# endif
 	
 	class server;
 	
@@ -497,11 +494,11 @@ namespace inetio
 				: inet_address(
 				*new sockaddr_in{
 						family, ::htons(port),
-#if defined(linux)
+# if defined(linux)
 						in_addr{address}}
-#else
+# else
 				in_addr{.S_un = {.S_addr = address}}}
-#endif
+# endif
 		)
 		{ }
 		
@@ -595,29 +592,29 @@ namespace inetio
 	};
 
 
-#if defined (linux)
+# if defined (linux)
 	
 	typedef bool (* client_process_function)(int socket, SSL* ssl, const inet_address& address, server* server);
 
-#else
+# else
 	
 	typedef bool (* client_process_function)(SOCKET socket, const inet_address& address, server* server);
 
-#endif
+# endif
 	
 	class server
 	{
 	public:
 		struct server_client_data
 		{
-#if defined(linux)
+# if defined(linux)
 			int socket;
 			std::map<int, bool>* is_client_processing_ptr;
 			SSL* ssl;
-#else
+# else
 			SOCKET socket;
 			std::map<SOCKET, bool>* is_client_processing_ptr;
-#endif
+# endif
 			inet_address address;
 			server* serv;
 			client_process_function process_function;
@@ -631,29 +628,29 @@ namespace inetio
 		
 		inline bool run(bool wait);
 
-#if defined(linux)
+# if defined(linux)
 		
 		inline static void* server_thread(void* args);
 
-#else
+# else
 		
 		inline static DWORD WINAPI server_thread(void* args);
 
-#endif
+# endif
 		
 		inline void run_server_thread(bool wait_for_child_threads);
 		
 		inline static void wait_for_all_servers();
 
-#if defined(linux)
+# if defined(linux)
 		
 		[[nodiscard]] int get_socket() const;
 
-#else
+# else
 		
 		[[nodiscard]] SOCKET get_socket() const;
 
-#endif
+# endif
 		
 		[[nodiscard]] inline int get_max_clients() const
 		{ return max_clients; }
@@ -675,7 +672,7 @@ namespace inetio
 		void* extra;
 	
 	private:
-#if defined(linux)
+# if defined(linux)
 		
 		inline static void* process_client(void* args);
 		
@@ -683,24 +680,24 @@ namespace inetio
 		int socket;
 		SSL_CTX* ctx = nullptr;
 
-#else
+# else
 		
 		inline static DWORD WINAPI process_client(void* args);
 		
 		SOCKET socket;
 		HANDLE main_thread = nullptr;
 
-#endif
+# endif
 		bool wait_for_child_threads = false;
 		
 		int max_clients;
 		inet_address address;
 		client_process_function process_function;
-#if defined(linux)
+# if defined(linux)
 		static pthread_mutex_t mutex;
 		std::string cert_file;
 		std::string key_file;
-#endif
+# endif
 		static int server_threads;
 	};
 	
@@ -708,7 +705,7 @@ namespace inetio
 	class inet_io
 	{
 	public:
-#if defined(linux)
+# if defined(linux)
 		
 		inline inet_io(int socket) : socket(socket), ssl(nullptr)
 		{ }
@@ -716,25 +713,25 @@ namespace inetio
 		inline inet_io(SSL* ssl) : socket(ssl ? SSL_get_fd(ssl) : -1), ssl(ssl)
 		{ }
 
-#else
+# else
 		
 		inline inet_io(SOCKET socket) : socket(socket)
 		{ }
 
-#endif
+# endif
 
-#if defined(linux)
+# if defined(linux)
 		
 		template <size_t max_attempts = 0>
 		inline bool write(const void* data, size_t size);
 
-#else
+# else
 		
 		inline bool write(const char* data, size_t size);
 
-#endif
+# endif
 
-#if defined(linux)
+# if defined(linux)
 		
 		inline ssize_t read(void* data, size_t size, bool non_block);
 		
@@ -744,13 +741,13 @@ namespace inetio
 		[[nodiscard]] inline SSL* get_ssl() const
 		{ return this->ssl; }
 
-#else
+# else
 		
 		inline size_t read(char* data, size_t size);
 	
 		[[nodiscard]] inline SOCKET get_socket() const;
 
-#endif
+# endif
 		
 		inline operator bool() const;
 	
@@ -761,12 +758,12 @@ namespace inetio
 		template <receive_datatype type>
 		friend inline inet_io& operator>>(inet_io& io, type& data);
 
-#if defined(linux)
+# if defined(linux)
 		int socket;
 		SSL* ssl;
-#else
+# else
 		SOCKET socket;
-#endif
+# endif
 		bool success = true;
 	};
 	
@@ -774,15 +771,15 @@ namespace inetio
 	class client : public inet_io
 	{
 	public:
-#if defined(linux)
+# if defined(linux)
 		
 		inline client(const inet_address& server_address, bool ssl_connection, SSL* ssl, SSL_CTX* ctx);
 
-#else
+# else
 		
 		inline client(const inet_address& server_address);
 
-#endif
+# endif
 		
 		inline bool connect();
 		
@@ -792,12 +789,12 @@ namespace inetio
 		[[nodiscard]] inline const inet_address& get_server_address() const
 		{ return server_address; }
 
-#if defined(linux)
+# if defined(linux)
 		
 		[[nodiscard]] SSL_CTX* get_ctx() const
 		{ return this->ctx; }
 
-#endif
+# endif
 		
 		inline ~client();
 	
@@ -811,7 +808,7 @@ namespace inetio
 	
 	int server::server_threads = 0;
 
-#if defined(linux)
+# if defined(linux)
 	pthread_mutex_t server::mutex = PTHREAD_MUTEX_INITIALIZER;
 	
 	
@@ -881,7 +878,7 @@ namespace inetio
 		LOG << color::green << "success." << ENDENT;
 	}
 
-#else
+# else
 	
 	inline server::server(int max_clients, const inet_address& address, client_process_function process_function, void* extra)
 			: max_clients(max_clients), address(address), process_function(process_function), extra(extra)
@@ -934,9 +931,9 @@ namespace inetio
 		LOG << "success.\n";
 	}
 
-#endif
+# endif
 
-#if defined(linux)
+# if defined(linux)
 	
 	inline bool server::run(bool wait = false)
 	{
@@ -1023,7 +1020,7 @@ namespace inetio
 		return true;
 	}
 
-#else
+# else
 	
 	inline bool server::run(bool wait) const
 	{
@@ -1077,55 +1074,55 @@ namespace inetio
 		return true;
 	}
 
-#endif
+# endif
 
-#if defined(linux)
+# if defined(linux)
 	
 	inline void* server::server_thread(void* args)
-#else
+# else
 	inline DWORD WINAPI server::server_thread(void* args)
-#endif
+# endif
 	{
 		auto* server = static_cast<class server*>(args);
 		while (server->run(server->wait_for_child_threads))
 		{ }
 		--server::server_threads;
-#if defined(linux)
+# if defined(linux)
 		return new bool(true);
-#else
+# else
 		return 0;
-#endif
+# endif
 	}
 	
 	inline void server::run_server_thread(bool wait_for_child_threads = false)
 	{
 		this->wait_for_child_threads = wait_for_child_threads;
 		++server::server_threads;
-#if defined(linux)
+# if defined(linux)
 		LOG << color::faint << color::yellow << "starting main server thread..." << ENDENT;
 		pthread_create(&this->main_thread, nullptr, server_thread, static_cast<void*>(const_cast<server*>(this)));
 		pthread_detach(this->main_thread);
 		LOG << color::faint << color::yellow << "done." << ENDENT;
-#else
+# else
 		LOG << "starting main server thread...\n";
 		this->main_thread = CreateThread(nullptr, 0, server_thread, static_cast<void*>(const_cast<server*>(this)), 0, 0);
 		LOG << "done.\n";
-#endif
+# endif
 	}
 	
 	inline void server::wait_for_all_servers()
 	{
 		while (server::server_threads > 0)
 		{
-#if defined(linux)
+# if defined(linux)
 			::usleep(10000);
-#else
+# else
 			Sleep(10);
-#endif
+# endif
 		}
 	}
 
-#if defined(linux)
+# if defined(linux)
 	
 	inline void* server::process_client(void* args)
 	{
@@ -1157,7 +1154,7 @@ namespace inetio
 		return socket;
 	}
 
-#else
+# else
 	
 	inline DWORD WINAPI server::process_client(void* args)
 	{
@@ -1182,36 +1179,36 @@ namespace inetio
 		return socket;
 	}
 
-#endif
+# endif
 	
 	inline server::~server()
 	{
-#if defined(linux)
+# if defined(linux)
 		LOG << color::faint << color::yellow << "destruction of server(); this = " << this << ENDENT;
 		pthread_kill(this->main_thread, 0);
 		::close(this->socket);
 		SSL_CTX_free(this->ctx);
-#else
+# else
 		TerminateThread(this->main_thread, 0);
 		closesocket(this->socket);
 		WSACleanup();
-#endif
+# endif
 	}
 
 // #definition-end server
 
 // #definition-begin inet_io
-#if defined(linux)
+# if defined(linux)
 	
 	template <size_t max_attempts>
 	inline bool inet_io::write(const void* data, size_t size)
-#else
+# else
 	bool inet_io::write(const char* data, size_t size)
-#endif
+# endif
 	{
 		this->success = true;
 
-#if defined(linux)
+# if defined(linux)
 		ssize_t wrote;
 		if (this->ssl)
 		{
@@ -1255,32 +1252,32 @@ namespace inetio
 		{
 			goto fail;
 		}
-#else
+# else
 		int wrote = send(this->socket, data, size, 0);
 		if (wrote == SOCKET_ERROR)
 		{
 			error("send() failed with error: " << WSAGetLastError());
 			goto fail;
 		}
-#endif
+# endif
 		
 		this->success = wrote == size;
 		
 		return wrote == size;
 
 fail:
-#if defined(linux)
+# if defined(linux)
 		ERR << "this = " << this << ENDENT;
 		if (this->ssl)
 			ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, &_detail_::_err_);
 		else
 			ERROR("write() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno));
-#endif
+# endif
 		this->success = false;
 		return false;
 	}
 
-#if defined(linux)
+# if defined(linux)
 	
 	inline ssize_t inet_io::read(void* data, size_t size, bool non_block = false)
 	{
@@ -1351,7 +1348,7 @@ read_again:
 		return read;
 	}
 
-#else
+# else
 	
 	inline size_t inet_io::read(char* data, size_t size)
 	{
@@ -1371,7 +1368,7 @@ read_again:
 	inline SOCKET inet_io::get_socket() const
 	{ return socket; }
 
-#endif
+# endif
 	
 	inline inet_io::operator bool() const
 	{ return this->success; }
@@ -1408,7 +1405,7 @@ read_again:
 
 // #definition-begin client
 
-#if defined(linux)
+# if defined(linux)
 	
 	inline client::client(const inet_address& server_address, bool ssl_connection = false, SSL* ssl = nullptr, SSL_CTX* ctx = nullptr) :
 			inet_io(ssl), server_address(server_address)
@@ -1435,7 +1432,7 @@ read_again:
 		LOG << color::green << "success." << ENDENT;
 	}
 
-#else
+# else
 	
 	inline client::client(const inet_address& server_address) :
 			server_address(server_address)
@@ -1453,11 +1450,11 @@ read_again:
 		LOG << "success.\n";
 	}
 
-#endif
+# endif
 	
 	inline bool client::connect()
 	{
-#if defined(linux)
+# if defined(linux)
 		LOG << color::green << "connecting..." << ENDENT;
 		
 		if (::connect(socket, (struct sockaddr*)&this->server_address, sizeof(this->server_address)) < 0)
@@ -1489,7 +1486,7 @@ read_again:
 		}
 		
 		LOG << color::green << "success." << ENDENT;
-#else
+# else
 		LOG << "connecting...\n";
 		if (::connect(socket, (struct sockaddr*)&this->server_address, sizeof(this->server_address)) == SOCKET_ERROR)
 		{
@@ -1500,19 +1497,19 @@ read_again:
 		}
 	
 		LOG << "success.\n";
-#endif
+# endif
 		return true;
 	}
 	
 	inline client::~client()
 	{
-#if defined(linux)
+# if defined(linux)
 		LOG << color::faint << color::yellow << "destruction of client(); this = " << this << ENDENT;
 		::close(this->socket);
 		SSL_free(this->ssl);
-#else
+# else
 		closesocket(this->socket);
-#endif
+# endif
 	}
 
 // #definition-end client
