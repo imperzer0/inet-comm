@@ -354,58 +354,58 @@ namespace inetio
 		auto& result = *new ifinfo{ };
 		int fd = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
 		
-		/*define the ifr_name - port name where network attached*/
+		/* define the ifr_name - port name where network attached */
 		::memcpy(result.if_name, interface_name, IFNAMSIZ - 1);
 		
-		/*address of the device using*/
+		/* address of the device using */
 		struct ifreq tmp{ };
 		::memcpy(tmp.ifr_name, interface_name, IFNAMSIZ - 1);
 		::ioctl(fd, SIOCGIFADDR, &tmp);
 		::memcpy(result.if_addr.sa_data, tmp.ifr_addr.sa_data, 14);
 		
-		/*broadcast address for a device*/
+		/* broadcast address for a device */
 		tmp = { };
 		::memcpy(tmp.ifr_name, interface_name, IFNAMSIZ - 1);
 		::ioctl(fd, SIOCGIFBRDADDR, &tmp);
 		::memcpy(result.if_broadaddr.sa_data, tmp.ifr_broadaddr.sa_data, 14);
 		
-		/*destination address of a point-to-point device*/
+		/* destination address of a point-to-point device */
 		tmp = { };
 		::memcpy(tmp.ifr_name, interface_name, IFNAMSIZ - 1);
 		::ioctl(fd, SIOCGIFDSTADDR, &tmp);
 		::memcpy(result.if_dstaddr.sa_data, tmp.ifr_dstaddr.sa_data, 14);
 		
-		/*active flag word of the device*/
+		/* active flag word of the device */
 		tmp = { };
 		::memcpy(tmp.ifr_name, interface_name, IFNAMSIZ - 1);
 		::ioctl(fd, SIOCGIFFLAGS, &tmp);
 		result.if_flags = tmp.ifr_flags;
 		
-		/*hardware (MAC) address*/
+		/* hardware (MAC) address */
 		tmp = { };
 		::memcpy(tmp.ifr_name, interface_name, IFNAMSIZ - 1);
 		::ioctl(fd, SIOCGIFHWADDR, &tmp);
 		::memcpy(result.if_hwaddr.sa_data, tmp.ifr_hwaddr.sa_data, 14);
 		
-		/*index of the interface*/
+		/* index of the interface */
 		tmp = { };
 		::memcpy(tmp.ifr_name, interface_name, IFNAMSIZ - 1);
 		::ioctl(fd, SIOCGIFINDEX, &tmp);
 		result.if_index = tmp.ifr_ifindex;
 		
-		/*interface's hardware parameters*/
+		/* interface's hardware parameters */
 		tmp = { };
 		::memcpy(tmp.ifr_name, interface_name, IFNAMSIZ - 1);
 		::ioctl(fd, SIOCGIFMAP, &tmp);
 		result.if_map = tmp.ifr_map;
 		
-		/*MTU (Maximum Transfer Unit) of a device*/
+		/* MTU (Maximum Transfer Unit) of a device */
 		tmp = { };
 		::memcpy(tmp.ifr_name, interface_name, IFNAMSIZ - 1);
 		::ioctl(fd, SIOCGIFMTU, &tmp);
 		result.if_mtu = tmp.ifr_mtu;
 		
-		/*network mask for a device*/
+		/* network mask for a device */
 		tmp = { };
 		::memcpy(tmp.ifr_name, interface_name, IFNAMSIZ - 1);
 		::ioctl(fd, SIOCGIFNETMASK, &tmp);
@@ -417,23 +417,42 @@ namespace inetio
 	
 	inline static std::list<struct ifaddrs*>& list_all_network_interfaces()
 	{
-		auto* result = new std::remove_cvref_t<decltype(list_all_network_interfaces())>();
+		auto& result = *new std::remove_cvref_t<decltype(list_all_network_interfaces())>();
 		
 		struct ifaddrs* ifaddr, * ifa;
 		
 		if (::getifaddrs(&ifaddr) == -1)
 		{
 			ERROR("getifaddrs() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno));
-			return *result;
+			return result;
 		}
 		
-		/* Walk through linked list, maintaining head pointer so we can free list later */
 		for (ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next)
 		{
 			if (ifa->ifa_addr == nullptr || ifa->ifa_addr->sa_family != AF_PACKET) continue;
-			result->push_back(ifa);
+			result.push_back(ifa);
 		}
-		return *result;
+		return result;
+	}
+	
+	inline static std::list<struct ifaddrs*>& list_all_network_addresses()
+	{
+		auto& result = *new std::remove_cvref_t<decltype(list_all_network_addresses())>();
+		
+		struct ifaddrs* ifaddr, * ifa;
+		
+		if (::getifaddrs(&ifaddr) == -1)
+		{
+			ERROR("getifaddrs() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno));
+			return result;
+		}
+		
+		for (ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next)
+		{
+			if (ifa->ifa_addr == nullptr) continue;
+			result.push_back(ifa);
+		}
+		return result;
 	}
 
 # endif
