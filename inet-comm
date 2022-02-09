@@ -20,6 +20,20 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 
+#define LOG_PREFIX log_console::l_lock << log_console::l_localtime << l_location
+#define ERR_PREFIX log_console::l_lock << log_console::l_localtime << l_location
+
+#define LOG (_detail_::_log_ << LOG_PREFIX)
+#define ERR (_detail_::_err_ << ERR_PREFIX)
+#define ENDENT color::reset << log_console::l_endent
+
+#define ERROR(message) (ERR << color::red << color::bold << "error" << color::reset << " : " << color::red << color::italic << message << color::reset << color::red << "." << ENDENT)
+#define FATAL_ERROR(message) ERROR(message); throw std::runtime_error(message)
+#define PRINT(stream, message) ((stream) << LOG_PREFIX << color::yellow << color::italic << message << color::reset << log_console::l_unlock)
+#define PRINTLN(stream, message) ((stream) << LOG_PREFIX << color::yellow << color::italic << message << ENDENT)
+
+#define DEFAULT_ERROR_HANDLER [](const char* str, size_t size, void* err_stream) { *static_cast<log_console*>(err_stream) << ERR_PREFIX << color::red << str << ENDENT; return 0; }
+
 #else
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -50,23 +64,114 @@ namespace inetio
 	{
 		static log_console _log_(stdout);
 		static log_console _err_(stderr);
+
+#if defined(linux)
+		
+		inline static SSL_CTX* init_server_ctx(const SSL_METHOD* method = DTLSv1_2_server_method())
+		{
+			SSL_CTX* ctx;
+			
+			OpenSSL_add_all_algorithms();  /* load & register all cryptos, etc. */
+			SSL_load_error_strings();   /* load all error messages */
+			
+			ctx = SSL_CTX_new(method);   /* create new context from method */
+			if (ctx == nullptr)
+			{
+				ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, new log_console(stderr));
+				return ctx;
+			}
+			
+			SSL_CTX_set_cipher_list(ctx, "ALL:eNULL");
+			
+			return ctx;
+		}
+		
+		inline static SSL_CTX* init_client_ctx(const SSL_METHOD* method = DTLSv1_2_client_method())
+		{
+			SSL_CTX* ctx;
+			
+			OpenSSL_add_all_algorithms();  /* load & register all cryptos, etc. */
+			SSL_load_error_strings();   /* load all error messages */
+			
+			ctx = SSL_CTX_new(method);   /* create new context from method */
+			if (ctx == nullptr)
+			{
+				ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, new log_console(stderr));
+				return ctx;
+			}
+			
+			SSL_CTX_set_cipher_list(ctx, "ALL:eNULL");
+			
+			return ctx;
+		}
+		
+		inline static bool load_certificates(SSL_CTX* ctx, const char* cert_file, const char* key_file)
+		{
+			///New lines
+			if (SSL_CTX_load_verify_locations(ctx, cert_file, key_file) != 1)
+				ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, new log_console(stderr));
+			
+			if (SSL_CTX_set_default_verify_paths(ctx) != 1)
+				ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, new log_console(stderr));
+			///End new lines
+			
+			/** set the local certificate from CertFile **/
+			if (SSL_CTX_use_certificate_file(ctx, cert_file, SSL_FILETYPE_PEM) <= 0)
+			{
+				ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, new log_console(stderr));
+				return false;
+			}
+			
+			/** set the private key from KeyFile (may be the same as CertFile) **/
+			SSL_CTX_set_default_passwd_cb_userdata(ctx, (void*)"1488");
+			if (SSL_CTX_use_PrivateKey_file(ctx, key_file, SSL_FILETYPE_PEM) <= 0)
+			{
+				ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, new log_console(stderr));
+				return false;
+			}
+			
+			/** verify private key **/
+			if (!SSL_CTX_check_private_key(ctx))
+			{
+				*new log_console(stderr) << log_console::l_localtime << l_location << color::red
+										 << "Private key does not match the public certificate" << ENDENT;
+				return false;
+			}
+			
+			///New lines - Force the client-side have a certificate
+//		SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, nullptr);
+//		SSL_CTX_set_verify_depth(ctx, 4);
+			///End new lines
+			return true;
+		}
+		
+		inline static void print_cert_info(SSL* ssl, log_console& stream)
+		{
+			X509* cert;
+			char* line;
+			
+			cert = SSL_get_peer_certificate(ssl); /* Get certificates (if available) */
+			if (cert)
+			{
+				PRINTLN(stream, "Server certificates:");
+				line = X509_NAME_oneline(X509_get_subject_name(cert), nullptr, 0);
+				PRINTLN(stream, "Subject: " << color::blue << line);
+				delete[] line;
+				line = X509_NAME_oneline(X509_get_issuer_name(cert), nullptr, 0);
+				PRINTLN(stream, "Issuer: " << color::blue << line);
+				delete[] line;
+				X509_free(cert);
+			}
+			else
+			{
+				PRINTLN(stream, "No certificates.");
+			}
+		}
+
+#endif
 	}
 
 #if defined(linux)
-
-#define LOG_PREFIX log_console::l_lock << log_console::l_localtime << l_location
-#define ERR_PREFIX log_console::l_lock << log_console::l_localtime << l_location
-
-#define LOG (_detail_::_log_ << LOG_PREFIX)
-#define ERR (_detail_::_err_ << ERR_PREFIX)
-#define ENDENT color::reset << log_console::l_endent
-
-#define ERROR(message) (ERR << color::red << color::bold << "error" << color::reset << " : " << color::red << color::italic << message << color::reset << color::red << "." << ENDENT)
-#define FATAL_ERROR(message) ERROR(message); throw std::runtime_error(message)
-#define PRINT(stream, message) ((stream) << LOG_PREFIX << color::yellow << color::italic << message << color::reset << log_console::l_unlock)
-#define PRINTLN(stream, message) ((stream) << LOG_PREFIX << color::yellow << color::italic << message << ENDENT)
-
-#define DEFAULT_ERROR_HANDLER [](const char* str, size_t size, void* err_stream) { *static_cast<log_console*>(err_stream) << ERR_PREFIX << color::red << str << ENDENT; return 0; }
 	
 	template <typename type>
 	concept send_datatype = std::is_same_v<std::remove_reference_t<type>, const char*> || std::is_same_v<std::remove_cvref_t<type>, const wchar_t*> ||
@@ -75,106 +180,126 @@ namespace inetio
 	
 	template <typename type>
 	concept receive_datatype = !std::is_const_v<type> && std::is_arithmetic_v<type>;
-	
-	inline static SSL_CTX* init_server_ctx(const SSL_METHOD* method = DTLSv1_2_server_method())
+
+
+/// Generates a 2048-bit RSA key.
+	inline EVP_PKEY* generate_public_key(std::string& error)
 	{
-		SSL_CTX* ctx;
-		
-		OpenSSL_add_all_algorithms();  /* load & register all cryptos, etc. */
-		SSL_load_error_strings();   /* load all error messages */
-		
-		ctx = SSL_CTX_new(method);   /* create new context from method */
-		if (ctx == nullptr)
+		/* Allocate memory for the EVP_PKEY structure. */
+		EVP_PKEY* pkey = EVP_PKEY_new();
+		if (!pkey)
 		{
-			ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, new log_console(stderr));
-			return ctx;
+			error = "Unable to create EVP_PKEY structure.";
+			return nullptr;
 		}
 		
-		SSL_CTX_set_cipher_list(ctx, "ALL:eNULL");
+		/* Generate the RSA key and assign it to pkey. */
+		RSA* rsa = RSA_generate_key(2048, RSA_F4, nullptr, nullptr);
+		if (!EVP_PKEY_assign_RSA(pkey, rsa))
+		{
+			error = "Unable to generate 2048-bit RSA key.";
+			EVP_PKEY_free(pkey);
+			return nullptr;
+		}
 		
-		return ctx;
+		/* The key has been generated, return it. */
+		return pkey;
+	}
+
+/// Generates a self-signed x509 certificate.
+	inline X509* generate_x509(
+			std::string& error, EVP_PKEY* pkey, const char* country, const char* organization, const char* certificate_name,
+			long serial_number = 1L, long valid_from = 0L, long valid_to = 31536000L)
+	{
+		/* Allocate memory for the X509 structure. */
+		X509* x509 = X509_new();
+		if (!x509)
+		{
+			error = "Unable to create X509 structure.";
+			return nullptr;
+		}
+		
+		/* Set the serial number. */
+		ASN1_INTEGER_set(X509_get_serialNumber(x509), serial_number);
+		
+		/* This certificate is valid from <valid_from seconds> until exactly <valid_to seconds>. Default from now to one year. */
+		X509_gmtime_adj(X509_get_notBefore(x509), valid_from);
+		X509_gmtime_adj(X509_get_notAfter(x509), valid_to);
+		
+		/* Set the public key for our certificate. */
+		X509_set_pubkey(x509, pkey);
+		
+		/* We want to copy the subject name to the issuer name. */
+		X509_NAME* name = X509_get_subject_name(x509);
+		
+		/* Set the country code and common name. */
+		X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC, (unsigned char*)country, ::strlen(country), -1, 0);
+		X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC, (unsigned char*)organization, ::strlen(organization), -1, 0);
+		X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, (unsigned char*)certificate_name, ::strlen(certificate_name), -1, 0);
+		
+		/* Now set the issuer name. */
+		X509_set_issuer_name(x509, name);
+		
+		X509_NAME_free(name);
+		
+		/* Actually sign the certificate with our key. */
+		if (!X509_sign(x509, pkey, EVP_sha1()))
+		{
+			error = "Error signing certificate.";
+			X509_free(x509);
+			return nullptr;
+		}
+		
+		return x509;
 	}
 	
-	inline static SSL_CTX* init_client_ctx(const SSL_METHOD* method = DTLSv1_2_client_method())
+	inline bool write_certificate_to_disk(
+			std::string& error, EVP_PKEY* pkey, X509* x509,
+			const char* key_filename = "key.pem", const char* x509_filename = "certificate.pem")
 	{
-		SSL_CTX* ctx;
-		
-		OpenSSL_add_all_algorithms();  /* load & register all cryptos, etc. */
-		SSL_load_error_strings();   /* load all error messages */
-		
-		ctx = SSL_CTX_new(method);   /* create new context from method */
-		if (ctx == nullptr)
+		/* Open the PEM file for writing the key to disk. */
+		FILE* pkey_file = ::fopen(key_filename, "wb");
+		if (!pkey_file)
 		{
-			ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, new log_console(stderr));
-			return ctx;
-		}
-		
-		SSL_CTX_set_cipher_list(ctx, "ALL:eNULL");
-		
-		return ctx;
-	}
-	
-	inline static bool load_certificates(SSL_CTX* ctx, const char* cert_file, const char* key_file)
-	{
-		///New lines
-		if (SSL_CTX_load_verify_locations(ctx, cert_file, key_file) != 1)
-			ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, new log_console(stderr));
-		
-		if (SSL_CTX_set_default_verify_paths(ctx) != 1)
-			ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, new log_console(stderr));
-		///End new lines
-		
-		/** set the local certificate from CertFile **/
-		if (SSL_CTX_use_certificate_file(ctx, cert_file, SSL_FILETYPE_PEM) <= 0)
-		{
-			ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, new log_console(stderr));
+			error = std::string("Unable to open file \"") + key_filename + "\" for writing.";
 			return false;
 		}
 		
-		/** set the private key from KeyFile (may be the same as CertFile) **/
-		SSL_CTX_set_default_passwd_cb_userdata(ctx, (void*)"1488");
-		if (SSL_CTX_use_PrivateKey_file(ctx, key_file, SSL_FILETYPE_PEM) <= 0)
+		/* Write the key to disk. */
+		bool ret = ::PEM_write_PrivateKey(pkey_file, pkey, nullptr, nullptr, 0, nullptr, nullptr);
+		::fclose(pkey_file);
+		
+		if (!ret)
 		{
-			ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, new log_console(stderr));
+			error = "Unable to write private key to disk.";
 			return false;
 		}
 		
-		/** verify private key **/
-		if (!SSL_CTX_check_private_key(ctx))
+		/* Open the PEM file for writing the certificate to disk. */
+		FILE* x509_file = ::fopen(x509_filename, "wb");
+		if (!x509_file)
 		{
-			*new log_console(stderr) << log_console::l_localtime << l_location << color::red
-									 << "Private key does not match the public certificate" << ENDENT;
+			error = std::string("Unable to open \"") + x509_filename + "\" for writing.";
 			return false;
 		}
 		
-		///New lines - Force the client-side have a certificate
-//		SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, nullptr);
-//		SSL_CTX_set_verify_depth(ctx, 4);
-		///End new lines
+		/* Write the certificate to disk. */
+		ret = ::PEM_write_X509(x509_file, x509);
+		::fclose(x509_file);
+		
+		if (!ret)
+		{
+			error = "Unable to write certificate to disk.";
+			return false;
+		}
+		
 		return true;
 	}
 	
-	inline static void print_cert_info(SSL* ssl, log_console& stream)
+	inline void cleanup_certificate(EVP_PKEY* key, X509* x509)
 	{
-		X509* cert;
-		char* line;
-		
-		cert = SSL_get_peer_certificate(ssl); /* Get certificates (if available) */
-		if (cert)
-		{
-			PRINTLN(stream, "Server certificates:");
-			line = X509_NAME_oneline(X509_get_subject_name(cert), nullptr, 0);
-			PRINTLN(stream, "Subject: " << color::blue << line);
-			delete[] line;
-			line = X509_NAME_oneline(X509_get_issuer_name(cert), nullptr, 0);
-			PRINTLN(stream, "Issuer: " << color::blue << line);
-			delete[] line;
-			X509_free(cert);
-		}
-		else
-		{
-			PRINTLN(stream, "No certificates.");
-		}
+		EVP_PKEY_free(key);
+		X509_free(x509);
 	}
 	
 	inline static void open_port_in_iptables(uint16_t port)
@@ -223,10 +348,8 @@ namespace inetio
 		/*define the ifr_name - port name where network attached*/
 		::memcpy(result.if_name, interface_name, IFNAMSIZ - 1);
 		
-		struct ifreq tmp{ };
-		
 		/*address of the device using*/
-		tmp = { };
+		struct ifreq tmp{ };
 		::memcpy(tmp.ifr_name, interface_name, IFNAMSIZ - 1);
 		::ioctl(fd, SIOCGIFADDR, &tmp);
 		::memcpy(result.if_addr.sa_data, tmp.ifr_addr.sa_data, 14);
@@ -705,23 +828,29 @@ namespace inetio
 		socket = ::socket(AF_INET, SOCK_STREAM, 0);
 		if (socket < 0)
 		{
-			ERROR("socket() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset
-									 << color::red << ". socket : " << socket << ". this = " << this);
+			ERROR(
+					"socket() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset
+									   << color::red << ". socket : " << socket << ". this = " << this
+			);
 			return;
 		}
 		
 		if (int ret = ::setsockopt(socket, SOL_SOCKET, SO_REUSEADDR, (char*)(new int(1)), sizeof(int)); ret < 0)
 		{
-			ERROR("setsockopt() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
-										 << ". this = " << this);
+			ERROR(
+					"setsockopt() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
+										   << ". this = " << this
+			);
 			return;
 		}
 		
 		LOG << color::green << "binding..." << ENDENT;
 		if (int ret = ::bind(socket, (struct sockaddr*)&address.address, sizeof(address.address)); ret < 0)
 		{
-			ERROR("bind() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
-								   << ". this = " << this);
+			ERROR(
+					"bind() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
+									 << ". this = " << this
+			);
 			return;
 		}
 		
@@ -730,18 +859,20 @@ namespace inetio
 			<< color::green << "listen..." << ENDENT;
 		if (listen(socket, max_clients) < 0)
 		{
-			ERROR("listen() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
-									 << ". this = " << this);
+			ERROR(
+					"listen() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
+									   << ". this = " << this
+			);
 			return;
 		}
 		
 		if (!this->cert_file.empty() && !this->key_file.empty())
 		{
 			LOG << color::green << "initializing ctx..." << ENDENT;
-			this->ctx = init_server_ctx();
+			this->ctx = _detail_::init_server_ctx();
 			
 			LOG << color::green << "loading certificates..." << ENDENT;
-			if (!load_certificates(this->ctx, this->cert_file.c_str(), this->key_file.c_str()))
+			if (!_detail_::load_certificates(this->ctx, this->cert_file.c_str(), this->key_file.c_str()))
 			{
 				ERROR("load_certificates() returned " << false << color::red << ". this = " << this);
 			}
@@ -823,7 +954,8 @@ namespace inetio
 			if (new_socket = ::accept(this->socket, (struct sockaddr*)&address, &addrlen); new_socket < 0)
 			{
 				ERROR("accept() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
-										 << ". this = " << this);
+										 << ". this = " << this
+				);
 				if (errno == EBADF || errno == EINVAL)
 				{
 					return false;
@@ -861,7 +993,7 @@ namespace inetio
 					}
 				}
 				
-				print_cert_info(ssl, _detail_::_log_);
+				_detail_::print_cert_info(ssl, _detail_::_log_);
 			}
 			
 			auto* dat = new server_client_data{ };
@@ -1159,8 +1291,10 @@ fail:
 			flags = fcntl(this->socket, F_GETFL, 0);
 			if (::fcntl(this->socket, F_SETFL, flags | O_NONBLOCK) < 0)
 			{
-				ERROR("fcntl() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
-										<< ". this = " << this);
+				ERROR(
+						"fcntl() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
+										  << ". this = " << this
+				);
 				this->success = false;
 			}
 		}
@@ -1180,8 +1314,10 @@ read_again:
 			{
 				if (::fcntl(this->socket, F_SETFL, flags))
 				{
-					ERROR("fcntl() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset
-											<< color::red << ". this = " << this);
+					ERROR(
+							"fcntl() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset
+											  << color::red << ". this = " << this
+					);
 					this->success = false;
 				}
 			}
@@ -1204,8 +1340,10 @@ read_again:
 		{
 			if (::fcntl(this->socket, F_SETFL, flags))
 			{
-				ERROR("fcntl() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
-										<< ". this = " << this);
+				ERROR(
+						"fcntl() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
+										  << ". this = " << this
+				);
 				this->success = false;
 			}
 		}
@@ -1284,13 +1422,15 @@ read_again:
 		this->socket = ::socket(AF_INET, SOCK_STREAM, 0);
 		if (this->socket < 0)
 		{
-			ERROR("socket init failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
-										<< ". socket : " << socket << ". this = " << this);
+			ERROR(
+					"socket init failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
+										  << ". socket : " << socket << ". this = " << this
+			);
 			return;
 		}
 		
 		this->ctx = ctx;
-		if (this->ctx == nullptr && ssl_connection) this->ctx = init_client_ctx();
+		if (this->ctx == nullptr && ssl_connection) this->ctx = _detail_::init_client_ctx();
 		
 		LOG << color::green << "success." << ENDENT;
 	}
@@ -1345,7 +1485,7 @@ read_again:
 				this->ssl = nullptr;
 			}
 			
-			print_cert_info(ssl, _detail_::_log_);
+			_detail_::print_cert_info(ssl, _detail_::_log_);
 		}
 		
 		LOG << color::green << "success." << ENDENT;
