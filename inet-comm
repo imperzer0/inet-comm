@@ -56,9 +56,9 @@
 
 #  define ERROR(message) (ERR << "error" << " : " << message << "\n")
 #  define FATAL_ERROR(message) error(message); throw std::runtime_error(message)
-	
-	typedef decltype(in_addr::S_un.S_addr) in_addr_t;
-	typedef ADDRESS_FAMILY sa_family_t;
+
+typedef decltype(in_addr::S_un.S_addr) in_addr_t;
+typedef ADDRESS_FAMILY sa_family_t;
 
 # endif
 
@@ -116,13 +116,11 @@ namespace inetio
 		
 		inline static bool load_certificates(SSL_CTX* ctx, const char* cert_file, const char* key_file)
 		{
-			///New lines
 			if (SSL_CTX_load_verify_locations(ctx, cert_file, key_file) != 1)
 				ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, new log_console(stderr));
 			
 			if (SSL_CTX_set_default_verify_paths(ctx) != 1)
 				ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, new log_console(stderr));
-			///End new lines
 			
 			/** set the local certificate from CertFile **/
 			if (SSL_CTX_use_certificate_file(ctx, cert_file, SSL_FILETYPE_PEM) <= 0)
@@ -132,7 +130,7 @@ namespace inetio
 			}
 			
 			/** set the private key from KeyFile (may be the same as CertFile) **/
-			SSL_CTX_set_default_passwd_cb_userdata(ctx, (void*)"1488");
+			SSL_CTX_set_default_passwd_cb_userdata(ctx, (void*)"14880");
 			if (SSL_CTX_use_PrivateKey_file(ctx, key_file, SSL_FILETYPE_PEM) <= 0)
 			{
 				ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, new log_console(stderr));
@@ -147,10 +145,10 @@ namespace inetio
 				return false;
 			}
 			
-			///New lines - Force the client-side have a certificate
-//		SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, nullptr);
-//		SSL_CTX_set_verify_depth(ctx, 4);
-			///End new lines
+			/** Force the client-side have a certificate **/
+			SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, nullptr);
+			SSL_CTX_set_verify_depth(ctx, 4);
+			
 			return true;
 		}
 		
@@ -179,8 +177,6 @@ namespace inetio
 
 # endif
 	}
-
-# if defined(linux)
 	
 	template <typename type>
 	concept send_datatype = std::is_same_v<std::remove_reference_t<type>, const char*> || std::is_same_v<std::remove_cvref_t<type>, const wchar_t*> ||
@@ -190,9 +186,10 @@ namespace inetio
 	template <typename type>
 	concept receive_datatype = !std::is_const_v<type> && std::is_arithmetic_v<type>;
 
+# if defined(linux)
 
-/// Generates a 2048-bit RSA key.
-	inline EVP_PKEY* generate_public_key(std::string& error)
+/// Generates ECDSA key.
+	inline EVP_PKEY* generate_key(std::string& error, const char* ec_type_name = "secp521r1")
 	{
 		/* Allocate memory for the EVP_PKEY structure. */
 		EVP_PKEY* pkey = EVP_PKEY_new();
@@ -202,16 +199,33 @@ namespace inetio
 			return nullptr;
 		}
 		
-		/* Generate the RSA key and assign it to pkey. */
-		RSA* rsa = RSA_generate_key(2048, RSA_F4, nullptr, nullptr);
-		if (!EVP_PKEY_assign_RSA(pkey, rsa))
+		/* Allocate memory for the EC_KEY structure. */
+		EC_KEY* ec_key = EC_KEY_new_by_curve_name(OBJ_txt2nid(ec_type_name));
+		if (!ec_key)
 		{
-			error = "Unable to generate 2048-bit RSA key.";
+			error = "Unable to create EC_KEY structure.";
+			return nullptr;
+		}
+		
+		/* For cert signing, we use  the OPENSSL_EC_NAMED_CURVE flag*/
+		EC_KEY_set_asn1_flag(ec_key, OPENSSL_EC_NAMED_CURVE);
+		
+		if (!EC_KEY_generate_key(ec_key))
+		{
+			error = "Unable to generate ECDSA key.";
+			EC_KEY_free(ec_key);
+			return nullptr;
+		}
+		
+		if (!EVP_PKEY_assign_EC_KEY(pkey, ec_key))
+		{
+			error = "Unable to generate ECDSA key.";
+			EC_KEY_free(ec_key);
 			EVP_PKEY_free(pkey);
 			return nullptr;
 		}
 		
-		/* The key has been generated, return it. */
+		EC_KEY_free(ec_key);
 		return pkey;
 	}
 
@@ -792,7 +806,9 @@ namespace inetio
 	public:
 # if defined(linux)
 		
-		inline client(const inet_address& server_address, bool ssl_connection, SSL* ssl, SSL_CTX* ctx);
+		inline client(
+				const inet_address& server_address, bool ssl_connection, SSL* ssl, SSL_CTX* ctx,
+				const std::string& cert_file, const std::string& key_file);
 
 # else
 		
@@ -820,6 +836,8 @@ namespace inetio
 	private:
 		inet_address server_address;
 		SSL_CTX* ctx;
+		std::string cert_file;
+		std::string key_file;
 	};
 
 
@@ -1426,8 +1444,10 @@ read_again:
 
 # if defined(linux)
 	
-	inline client::client(const inet_address& server_address, bool ssl_connection = false, SSL* ssl = nullptr, SSL_CTX* ctx = nullptr) :
-			inet_io(ssl), server_address(server_address)
+	inline client::client(
+			const inet_address& server_address, bool ssl_connection = false, SSL* ssl = nullptr, SSL_CTX* ctx = nullptr,
+			const std::string& cert_file = "", const std::string& key_file = "")
+			: inet_io(ssl), server_address(server_address), cert_file(cert_file), key_file(key_file)
 	{
 		LOG << color::green << "socket init...\nserver address: " << color::yellow << this->server_address.get_address()
 			<< color::green << ";\nsocket family: " << this->server_address.get_family()
@@ -1446,7 +1466,19 @@ read_again:
 		}
 		
 		this->ctx = ctx;
-		if (this->ctx == nullptr && ssl_connection) this->ctx = _detail_::init_client_ctx();
+		if (this->ctx == nullptr && ssl_connection)
+		{
+			LOG << color::green << "initializing ctx..." << ENDENT;
+			this->ctx = _detail_::init_client_ctx();
+			if (!this->cert_file.empty() && !this->key_file.empty())
+			{
+				LOG << color::green << "loading certificates..." << ENDENT;
+				if (!_detail_::load_certificates(this->ctx, this->cert_file.c_str(), this->key_file.c_str()))
+				{
+					ERROR("load_certificates() returned " << false << color::red << ". this = " << this);
+				}
+			}
+		}
 		
 		LOG << color::green << "success." << ENDENT;
 	}
