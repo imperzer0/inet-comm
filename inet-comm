@@ -23,8 +23,8 @@
 #  define LOG_PREFIX log_console::l_lock << log_console::l_localtime << l_location
 #  define ERR_PREFIX log_console::l_lock << log_console::l_localtime << l_location
 
-#  define LOG (_detail_::_log_ << LOG_PREFIX)
-#  define ERR (_detail_::_err_ << ERR_PREFIX)
+#  define LOG (__detail__::_log_ << LOG_PREFIX)
+#  define ERR (__detail__::_err_ << ERR_PREFIX)
 #  define ENDENT color::reset << log_console::l_endent
 
 #  define ERROR(message) (ERR << color::red << color::bold << "error" << color::reset << " : " << color::red << color::italic << message << color::reset << color::red << "." << ENDENT)
@@ -69,7 +69,7 @@ typedef ADDRESS_FAMILY sa_family_t;
 
 namespace inetio
 {
-	namespace _detail_
+	namespace __detail__ __attribute__((visibility("hidden")))
 	{
 		static log_console _log_(stdout);
 		static log_console _err_(stderr);
@@ -903,10 +903,10 @@ namespace inetio
 		if (!this->cert_file.empty() && !this->key_file.empty())
 		{
 			LOG << color::green << "initializing ctx..." << ENDENT;
-			this->ctx = _detail_::init_server_ctx();
+			this->ctx = __detail__::init_server_ctx();
 			
 			LOG << color::green << "loading certificates..." << ENDENT;
-			if (!_detail_::load_certificates(this->ctx, this->cert_file.c_str(), this->key_file.c_str()))
+			if (!__detail__::load_certificates(this->ctx, this->cert_file.c_str(), this->key_file.c_str()))
 			{
 				ERROR("load_certificates() returned " << false << color::red << ". this = " << this);
 			}
@@ -1014,7 +1014,7 @@ namespace inetio
 				
 				if (!SSL_set_fd(ssl, new_socket)) /** set connection socket to SSL state **/
 				{
-					ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, &_detail_::_err_);
+					ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, &__detail__::_err_);
 				}
 				
 				if (ssl)
@@ -1022,12 +1022,12 @@ namespace inetio
 					if (SSL_accept(ssl) <= 0)
 					{
 						ERROR("SSL_accept() failed. this = " << this);
-						ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, &_detail_::_err_);
+						ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, &__detail__::_err_);
 						ssl = nullptr;
 					}
 				}
 				
-				_detail_::print_cert_info(ssl, _detail_::_log_);
+				__detail__::print_cert_info(ssl, __detail__::_log_);
 			}
 			
 			auto* dat = new server_client_data{ };
@@ -1253,7 +1253,7 @@ namespace inetio
 			if (!wrote)
 			{
 				ERR << "this = " << this << ENDENT;
-				ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, &_detail_::_err_);
+				ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, &__detail__::_err_);
 			}
 		}
 		else
@@ -1306,7 +1306,7 @@ fail:
 # if defined(linux)
 		ERR << "this = " << this << ENDENT;
 		if (this->ssl)
-			ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, &_detail_::_err_);
+			ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, &__detail__::_err_);
 		else
 			ERROR("write() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno));
 # endif
@@ -1359,7 +1359,7 @@ read_again:
 			if (this->ssl)
 			{
 				if (ERR_get_error() == SSL_ERROR_WANT_READ) goto read_again;
-				ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, &_detail_::_err_);
+				ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, &__detail__::_err_);
 			}
 			else
 			{
@@ -1469,11 +1469,11 @@ read_again:
 		if (this->ctx == nullptr && ssl_connection)
 		{
 			LOG << color::green << "initializing ctx..." << ENDENT;
-			this->ctx = _detail_::init_client_ctx();
+			this->ctx = __detail__::init_client_ctx();
 			if (!this->cert_file.empty() && !this->key_file.empty())
 			{
 				LOG << color::green << "loading certificates..." << ENDENT;
-				if (!_detail_::load_certificates(this->ctx, this->cert_file.c_str(), this->key_file.c_str()))
+				if (!__detail__::load_certificates(this->ctx, this->cert_file.c_str(), this->key_file.c_str()))
 				{
 					ERROR("load_certificates() returned " << false << color::red << ". this = " << this);
 				}
@@ -1529,11 +1529,11 @@ read_again:
 			if (SSL_connect(ssl) <= 0)
 			{
 				ERR << "this = " << this << ENDENT;
-				ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, &_detail_::_err_);
+				ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, &__detail__::_err_);
 				this->ssl = nullptr;
 			}
 			
-			_detail_::print_cert_info(ssl, _detail_::_log_);
+			__detail__::print_cert_info(ssl, __detail__::_log_);
 		}
 		
 		LOG << color::green << "success." << ENDENT;
