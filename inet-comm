@@ -21,18 +21,21 @@
 #  include <openssl/err.h>
 
 #  define LOG_PREFIX log_console::l_lock << log_console::l_localtime << l_location
+#  define LOG_COLOR color::yellow << color::italic
+#  define DEBUG_COLOR color::faint << color::yellow
 #  define ERR_PREFIX log_console::l_lock << log_console::l_localtime << l_location
 
 #  define LOG (__detail__::_log_ << LOG_PREFIX)
 #  define ERR (__detail__::_err_ << ERR_PREFIX)
-#  define ENDENT color::reset << log_console::l_endent
+#  define ENDENT color::reset << log_console::l_unlock
+#  define ENDENTLN color::reset << log_console::l_endent
 
-#  define ERROR(message) (ERR << color::red << color::bold << "error" << color::reset << " : " << color::red << color::italic << message << color::reset << color::red << "." << ENDENT)
+#  define ERROR(message) (ERR << color::red << color::bold << "error" << color::reset << " : " << color::red << color::italic << message << color::reset << color::red << "." << ENDENTLN)
 #  define FATAL_ERROR(message) ERROR(message); throw std::runtime_error(message)
-#  define PRINT(stream, message) ((stream) << LOG_PREFIX << color::yellow << color::italic << message << color::reset << log_console::l_unlock)
-#  define PRINTLN(stream, message) ((stream) << LOG_PREFIX << color::yellow << color::italic << message << ENDENT)
+#  define PRINT(stream, message) ((stream) << LOG_PREFIX << LOG_COLOR << message << ENDENT)
+#  define PRINTLN(stream, message) ((stream) << LOG_PREFIX << LOG_COLOR << message << ENDENTLN)
 
-#  define DEFAULT_ERROR_HANDLER [](const char* str, size_t size, void* err_stream) { *static_cast<log_console*>(err_stream) << ERR_PREFIX << color::red << str << ENDENT; return 0; }
+#  define DEFAULT_ERROR_HANDLER [](const char* str, size_t size, void* err_stream) { *static_cast<log_console*>(err_stream) << ERR_PREFIX << color::red << str << ENDENTLN; return 0; }
 
 # else
 
@@ -141,7 +144,7 @@ namespace inetio
 			if (!SSL_CTX_check_private_key(ctx))
 			{
 				*new log_console(stderr) << log_console::l_localtime << l_location << color::red
-										 << "Private key does not match the public certificate" << ENDENT;
+										 << "Private key does not match the public certificate" << ENDENTLN;
 				return false;
 			}
 			
@@ -329,11 +332,11 @@ namespace inetio
 	{
 		if (!geteuid())
 		{
-			LOG << color::faint << color::green << "executing opening ports command..." << ENDENT;
+			LOG << color::faint << DEBUG_COLOR << "executing opening ports command..." << ENDENTLN;
 			std::string cmd("sudo iptables -A ");
 			system((cmd + "INPUT -p tcp --dport " + std::to_string(port) + " -j ACCEPT").c_str());
 			system((cmd + "OUTPUT -p tcp --dport " + std::to_string(port) + " -j ACCEPT").c_str());
-			LOG << color::faint << color::green << "executed." << ENDENT;
+			LOG << color::faint << DEBUG_COLOR << "executed." << ENDENTLN;
 		}
 	}
 	
@@ -341,11 +344,11 @@ namespace inetio
 	{
 		if (!geteuid())
 		{
-			LOG << color::faint << color::green << "executing opening ports command..." << ENDENT;
+			LOG << color::faint << DEBUG_COLOR << "executing opening ports command..." << ENDENTLN;
 			std::string cmd("sudo iptables -D ");
 			system((cmd + "INPUT -p tcp --dport " + std::to_string(port) + " -j ACCEPT").c_str());
 			system((cmd + "OUTPUT -p tcp --dport " + std::to_string(port) + " -j ACCEPT").c_str());
-			LOG << color::faint << color::green << "executed." << ENDENT;
+			LOG << color::faint << DEBUG_COLOR << "executed." << ENDENTLN;
 		}
 	}
 	
@@ -854,11 +857,13 @@ namespace inetio
 			const std::string& cert_file = "", const std::string& key_file = "") :
 			max_clients(max_clients), address(address), process_function(process_function), extra(extra), cert_file(cert_file), key_file(key_file)
 	{
-		LOG << color::green << "socket init...\nserver address: " << color::yellow << address.get_address()
-			<< color::green << ";\nsocket family: " << address.get_family()
-			<< color::green << ";\nport = " << address.get_port()
-			<< color::green << ";\n\tmax connections accept = " << max_clients
-			<< color::green << ";" << ENDENT;
+		LOG << DEBUG_COLOR << "socket init..." << color::reset << "\n"
+			<< DEBUG_COLOR << "server address: " << color::blue_bg << color::black << address.get_address() << color::reset << DEBUG_COLOR << ";"
+			<< color::reset << "\n"
+			<< DEBUG_COLOR << "socket family: " << address.get_family() << DEBUG_COLOR << ";" << color::reset << "\n"
+			<< DEBUG_COLOR << "port = " << address.get_port() << DEBUG_COLOR << ";" << color::reset << "\n"
+			<< DEBUG_COLOR << "\tmax connections accept = " << max_clients << DEBUG_COLOR << ";" << color::reset << "\n"
+			<< DEBUG_COLOR << "this = " << this << DEBUG_COLOR << ";" << ENDENTLN;
 		socket = ::socket(AF_INET, SOCK_STREAM, 0);
 		if (socket < 0)
 		{
@@ -878,7 +883,7 @@ namespace inetio
 			return;
 		}
 		
-		LOG << color::green << "binding..." << ENDENT;
+		LOG << DEBUG_COLOR << "binding..." << ENDENTLN;
 		if (int ret = ::bind(socket, (struct sockaddr*)&address.address, sizeof(address.address)); ret < 0)
 		{
 			ERROR(
@@ -888,9 +893,10 @@ namespace inetio
 			return;
 		}
 		
-		LOG << color::green << "success.\n" << color::reset
-			<< color::green << "listening socket = " << color::reset << socket << color::green << " ...\n" << color::reset
-			<< color::green << "listen..." << ENDENT;
+		LOG << DEBUG_COLOR << "success." << color::reset << "\n"
+			<< DEBUG_COLOR << "listening socket = " << color::reset << socket << DEBUG_COLOR << " ..."
+			<< color::reset << "\n"
+			<< color::reset << DEBUG_COLOR << "listen..." << ENDENTLN;
 		if (listen(socket, max_clients) < 0)
 		{
 			ERROR(
@@ -902,17 +908,17 @@ namespace inetio
 		
 		if (!this->cert_file.empty() && !this->key_file.empty())
 		{
-			LOG << color::green << "initializing ctx..." << ENDENT;
+			LOG << DEBUG_COLOR << "initializing ctx..." << ENDENTLN;
 			this->ctx = __detail__::init_server_ctx();
 			
-			LOG << color::green << "loading certificates..." << ENDENT;
+			LOG << DEBUG_COLOR << "loading certificates..." << ENDENTLN;
 			if (!__detail__::load_certificates(this->ctx, this->cert_file.c_str(), this->key_file.c_str()))
 			{
 				ERROR("load_certificates() returned " << false << color::red << ". this = " << this);
 			}
 		}
 		
-		LOG << color::green << "success." << ENDENT;
+		LOG << DEBUG_COLOR << "success." << ENDENTLN;
 	}
 
 # else
@@ -997,10 +1003,12 @@ namespace inetio
 				break;
 			}
 			
-			LOG << color::green << "====== new connection ======\n socket = " << color::reset << new_socket
-				<< color::green << "\n address = " << color::yellow << ::inet_ntoa(address.sin_addr)
-				<< color::green << "\n port = " << color::reset << ::ntohs(address.sin_port)
-				<< color::green << "\n\n============================" << ENDENT;
+			LOG << DEBUG_COLOR << "====== new connection ======" << color::reset << "\n"
+				<< DEBUG_COLOR << " socket = " << color::reset << new_socket << DEBUG_COLOR << ";" << color::reset << "\n"
+				<< DEBUG_COLOR << " address = " << color::blue_bg << color::black << ::inet_ntoa(address.sin_addr) << DEBUG_COLOR << ";"
+				<< color::reset << "\n"
+				<< DEBUG_COLOR << " port = " << color::reset << ::ntohs(address.sin_port) << DEBUG_COLOR << ";" << color::reset << "\n\n"
+				<< DEBUG_COLOR << "============================" << ENDENTLN;
 			
 			SSL* ssl = nullptr;
 			
@@ -1040,13 +1048,13 @@ namespace inetio
 			dat->threads_count = &++threads_count;
 			dat->process_function = process_function;
 			
-			LOG << color::green << "running client processing thread..." << ENDENT;
+			LOG << DEBUG_COLOR << "running client processing thread..." << ENDENTLN;
 			
 			pthread_t pthread;
 			pthread_create(&pthread, nullptr, process_client, (void*)dat);
 			::pthread_detach(pthread);
 			
-			LOG << color::green << "done." << ENDENT;
+			LOG << DEBUG_COLOR << "done." << ENDENTLN;
 		}
 		
 		while (wait && threads_count > 0)
@@ -1136,10 +1144,10 @@ namespace inetio
 		this->wait_for_child_threads = wait_for_child_threads;
 		++server::server_threads;
 # if defined(linux)
-		LOG << color::faint << color::yellow << "starting main server thread..." << ENDENT;
+		LOG << DEBUG_COLOR << "starting main server thread..." << ENDENTLN;
 		pthread_create(&this->main_thread, nullptr, server_thread, static_cast<void*>(const_cast<server*>(this)));
 		pthread_detach(this->main_thread);
-		LOG << color::faint << color::yellow << "done." << ENDENT;
+		LOG << DEBUG_COLOR << "done." << ENDENTLN;
 # else
 		LOG << "starting main server thread...\n";
 		this->main_thread = CreateThread(nullptr, 0, server_thread, static_cast<void*>(const_cast<server*>(this)), 0, 0);
@@ -1166,7 +1174,7 @@ namespace inetio
 		pthread_mutex_lock(&mutex);
 		struct server_client_data& data = *static_cast<struct server_client_data*>(args);
 		int client_socket = data.socket;
-		LOG << color::green << "\nsocket : " << client_socket << ENDENT;
+		LOG << DEBUG_COLOR << "socket : " << client_socket << ENDENTLN;
 		if ((*data.is_client_processing_ptr)[client_socket])
 		{
 			return nullptr;
@@ -1174,13 +1182,13 @@ namespace inetio
 		(*data.is_client_processing_ptr)[client_socket] = true;
 		pthread_mutex_unlock(&mutex);
 		
-		LOG << color::green << "processing client...\n\tthread_no = " << data.thread_id << color::green << "; this = " << data.serv
-			<< ENDENT;
+		LOG << DEBUG_COLOR << "processing client..." << color::reset << "\n"
+			<< DEBUG_COLOR << "\tthread_no = " << data.thread_id << DEBUG_COLOR << "; this = " << data.serv << ENDENTLN;
 		while (data.process_function(data.socket, data.ssl, data.address, data.serv))
 		{ }
-		LOG << color::green << "SSL_free()..." << ENDENT;
+		LOG << DEBUG_COLOR << "SSL_free()..." << ENDENTLN;
 		SSL_free(data.ssl);
-		LOG << color::faint << "job finished.\n\tthread_no = " << data.thread_id << ";" << ENDENT;
+		LOG << color::faint << "job finished.\n\tthread_no = " << data.thread_id << ";" << ENDENTLN;
 		(*data.is_client_processing_ptr)[client_socket] = false;
 		--*data.threads_count;
 		return nullptr;
@@ -1221,7 +1229,7 @@ namespace inetio
 	inline server::~server()
 	{
 # if defined(linux)
-		LOG << color::faint << color::yellow << "destruction of server(); this = " << this << ENDENT;
+		LOG << DEBUG_COLOR << "destruction of server(); this = " << this << ENDENTLN;
 		pthread_kill(this->main_thread, 0);
 		::close(this->socket);
 		SSL_CTX_free(this->ctx);
@@ -1252,7 +1260,7 @@ namespace inetio
 			wrote = SSL_write(this->ssl, data, size);
 			if (!wrote)
 			{
-				ERR << "this = " << this << ENDENT;
+				ERR << "this = " << this << ENDENTLN;
 				ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, &__detail__::_err_);
 			}
 		}
@@ -1270,7 +1278,8 @@ namespace inetio
 		
 		for (size_t attempt = 0; wrote < size && attempt < max_attempts; ++attempt)
 		{
-			LOG << color::faint << color::green << "wrote only " << wrote << color::green << "bytes of data - trying to write rest." << ENDENT;
+			LOG << color::faint << DEBUG_COLOR << "wrote only " << wrote << DEBUG_COLOR
+				<< "bytes of data - trying to write rest." << ENDENTLN;
 			data_iter += wrote;
 			size -= wrote;
 			size_t local_wrote;
@@ -1304,7 +1313,7 @@ namespace inetio
 
 fail:
 # if defined(linux)
-		ERR << "this = " << this << ENDENT;
+		ERR << "this = " << this << ENDENTLN;
 		if (this->ssl)
 			ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, &__detail__::_err_);
 		else
@@ -1342,7 +1351,7 @@ read_again:
 		
 		if (read <= 0)
 		{
-			ERR << "this = " << this << ENDENT;
+			ERR << "this = " << this << ENDENTLN;
 			
 			if (non_block)
 			{
@@ -1449,11 +1458,11 @@ read_again:
 			const std::string& cert_file = "", const std::string& key_file = "")
 			: inet_io(ssl), server_address(server_address), cert_file(cert_file), key_file(key_file)
 	{
-		LOG << color::green << "socket init...\nserver address: " << color::yellow << this->server_address.get_address()
-			<< color::green << ";\nsocket family: " << this->server_address.get_family()
-			<< color::green << ";\nport = " << this->server_address.get_port() << color::green << ";"
-			<< ENDENT;
-		
+		LOG << DEBUG_COLOR << "socket init..." << color::reset << "\n"
+			<< DEBUG_COLOR << "server address: " << color::blue_bg << color::black << this->server_address.get_address() << DEBUG_COLOR << ";"
+			<< color::reset << "\n"
+			<< DEBUG_COLOR << "socket family: " << this->server_address.get_family() << DEBUG_COLOR << ";" << color::reset << "\n"
+			<< DEBUG_COLOR << "port = " << this->server_address.get_port() << DEBUG_COLOR << ";" << ENDENTLN;
 		
 		this->socket = ::socket(AF_INET, SOCK_STREAM, 0);
 		if (this->socket < 0)
@@ -1468,11 +1477,11 @@ read_again:
 		this->ctx = ctx;
 		if (this->ctx == nullptr && ssl_connection)
 		{
-			LOG << color::green << "initializing ctx..." << ENDENT;
+			LOG << DEBUG_COLOR << "initializing ctx..." << ENDENTLN;
 			this->ctx = __detail__::init_client_ctx();
 			if (!this->cert_file.empty() && !this->key_file.empty())
 			{
-				LOG << color::green << "loading certificates..." << ENDENT;
+				LOG << DEBUG_COLOR << "loading certificates..." << ENDENTLN;
 				if (!__detail__::load_certificates(this->ctx, this->cert_file.c_str(), this->key_file.c_str()))
 				{
 					ERROR("load_certificates() returned " << false << color::red << ". this = " << this);
@@ -1480,7 +1489,7 @@ read_again:
 			}
 		}
 		
-		LOG << color::green << "success." << ENDENT;
+		LOG << DEBUG_COLOR << "success." << ENDENTLN;
 	}
 
 # else
@@ -1506,7 +1515,7 @@ read_again:
 	inline bool client::connect()
 	{
 # if defined(linux)
-		LOG << color::green << "connecting..." << ENDENT;
+		LOG << DEBUG_COLOR << "connecting..." << ENDENTLN;
 		
 		if (::connect(socket, (struct sockaddr*)&this->server_address, sizeof(this->server_address)) < 0)
 		{
@@ -1516,7 +1525,7 @@ read_again:
 		
 		if (!this->ssl && this->ctx)
 		{
-			LOG << color::green << "SSL_new()..." << ENDENT;
+			LOG << DEBUG_COLOR << "SSL_new()..." << ENDENTLN;
 			this->ssl = SSL_new(this->ctx);
 		}
 		
@@ -1524,11 +1533,11 @@ read_again:
 		{
 			SSL_set_fd(this->ssl, this->socket);
 			
-			LOG << color::green << "SSL_connect()..." << ENDENT;
+			LOG << DEBUG_COLOR << "SSL_connect()..." << ENDENTLN;
 			
 			if (SSL_connect(ssl) <= 0)
 			{
-				ERR << "this = " << this << ENDENT;
+				ERR << "this = " << this << ENDENTLN;
 				ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, &__detail__::_err_);
 				this->ssl = nullptr;
 			}
@@ -1536,7 +1545,7 @@ read_again:
 			__detail__::print_cert_info(ssl, __detail__::_log_);
 		}
 		
-		LOG << color::green << "success." << ENDENT;
+		LOG << DEBUG_COLOR << "success." << ENDENTLN;
 # else
 		LOG << "connecting...\n";
 		if (::connect(socket, (struct sockaddr*)&this->server_address, sizeof(this->server_address)) == SOCKET_ERROR)
@@ -1555,7 +1564,7 @@ read_again:
 	inline client::~client()
 	{
 # if defined(linux)
-		LOG << color::faint << color::yellow << "destruction of client(); this = " << this << ENDENT;
+		LOG << DEBUG_COLOR << "destruction of client(); this = " << this << ENDENTLN;
 		::close(this->socket);
 		SSL_free(this->ssl);
 # else
