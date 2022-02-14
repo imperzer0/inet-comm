@@ -759,7 +759,7 @@ namespace inetio
 # if defined(linux)
 		
 		template <size_t max_attempts = 0>
-		inline bool write(const void* data, size_t size);
+		inline ssize_t write(const void* data, size_t size);
 
 # else
 		
@@ -1246,7 +1246,7 @@ namespace inetio
 # if defined(linux)
 	
 	template <size_t max_attempts>
-	inline bool inet_io::write(const void* data, size_t size)
+	inline ssize_t inet_io::write(const void* data, size_t size)
 # else
 	bool inet_io::write(const char* data, size_t size)
 # endif
@@ -1254,7 +1254,7 @@ namespace inetio
 		this->success = true;
 
 # if defined(linux)
-		ssize_t wrote;
+		ssize_t wrote, total_wrote = 0;
 		if (this->ssl)
 		{
 			wrote = SSL_write(this->ssl, data, size);
@@ -1272,9 +1272,9 @@ namespace inetio
 		auto* data_iter = reinterpret_cast<const char*>(data);
 		
 		if (wrote < 0)
-		{
 			goto fail;
-		}
+		
+		total_wrote += wrote;
 		
 		for (size_t attempt = 0; wrote < size && attempt < max_attempts; ++attempt)
 		{
@@ -1289,14 +1289,9 @@ namespace inetio
 				wrote = ::write(this->socket, data_iter, size);
 			
 			if (wrote < 0)
-			{
 				goto fail;
-			}
-		}
-		
-		if (wrote <= 0)
-		{
-			goto fail;
+			
+			total_wrote += wrote;
 		}
 # else
 		int wrote = send(this->socket, data, size, 0);
@@ -1309,7 +1304,7 @@ namespace inetio
 		
 		this->success = wrote == size;
 		
-		return wrote == size;
+		return total_wrote;
 
 fail:
 # if defined(linux)
@@ -1320,7 +1315,7 @@ fail:
 			ERROR("write() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno));
 # endif
 		this->success = false;
-		return false;
+		return wrote;
 	}
 
 # if defined(linux)
