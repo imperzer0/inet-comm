@@ -480,6 +480,7 @@ namespace inet
 		inline static inet_address& from_ipv4(const std::string& address, uint16_t default_port)
 		{
 			auto& addr = *new inet_address;
+			addr.address.sin_family = AF_INET;
 			size_t pos = address.find(':');
 			if (pos == std::string::npos)
 			{
@@ -523,7 +524,7 @@ namespace inet
 		
 		friend class inet_io;
 		
-		sockaddr_in address;
+		sockaddr_in address{AF_INET};
 	};
 	
 	
