@@ -470,7 +470,7 @@ namespace inet
 		{ }
 		
 		inline inet_address(in_addr address, uint16_t port)
-				: inet_address(*new sockaddr_in{AF_INET, ::htons(port), address})
+				: inet_address(sockaddr_in{AF_INET, ::htons(port), address})
 		{ }
 		
 		inline inet_address(const std::string& address, uint16_t port)
