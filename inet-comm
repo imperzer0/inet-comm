@@ -948,7 +948,7 @@ namespace inet
 		{
 			ERROR("socket() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
 									 << ". socket : " << socket << ". this = " << this);
-			return;
+			throw std::runtime_error("socket() failed");
 		}
 		
 		ctx = nullptr;
@@ -971,7 +971,7 @@ namespace inet
 		if (::connect(socket, (struct sockaddr*)&server_address, sizeof(server_address)) < 0)
 		{
 			ERROR("connect() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno));
-			return;
+			throw std::runtime_error("connect() failed");
 		}
 		
 		if (ssl_connection)
@@ -980,6 +980,7 @@ namespace inet
 			{
 				ERROR("SSL_new() failed.");
 				ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, &__detail__::_err_);
+				throw std::runtime_error("SSL_new() failed");
 			}
 			
 			SSL_set_fd(ssl, this->socket);
