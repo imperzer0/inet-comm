@@ -616,21 +616,15 @@ namespace inet
 		
 		inline virtual ssize_t read(void* data, size_t size);
 		
-		[[nodiscard]] inline virtual int get_socket() const
+		[[nodiscard]] inline int get_socket() const
 		{ return socket; }
 		
-		[[nodiscard]] inline virtual SSL* get_ssl() const
+		[[nodiscard]] inline SSL* get_ssl() const
 		{ return this->ssl; }
 		
 		inline virtual operator bool() const;
 	
 	protected:
-		template <send_datatype type>
-		friend inline inet_io& operator<<(inet_io& io, type data);
-		
-		template <receive_datatype type>
-		friend inline inet_io& operator>>(inet_io& io, type& data);
-		
 		int socket;
 		SSL* ssl;
 		bool success = true;
@@ -642,13 +636,13 @@ namespace inet
 	public:
 		inline client(const inet_address& server_address, bool ssl_connection, const std::string& cert_file, const std::string& key_file);
 		
-		[[nodiscard]] inline virtual uint16_t get_port() const
+		[[nodiscard]] inline uint16_t get_port() const
 		{ return this->server_address.get_port(); }
 		
-		[[nodiscard]] inline virtual const inet_address& get_server_address() const
+		[[nodiscard]] inline const inet_address& get_server_address() const
 		{ return server_address; }
 		
-		[[nodiscard]] inline virtual SSL_CTX* get_ctx() const
+		[[nodiscard]] inline SSL_CTX* get_ctx() const
 		{ return this->ctx; }
 		
 		inline ~client();
