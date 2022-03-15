@@ -944,7 +944,7 @@ namespace inet
 			<< color::reset << "\n"
 			<< DEBUG_COLOR << "port = " << server_address.get_port() << DEBUG_COLOR << ";" << ENDENTLN;
 		
-		socket = ::socket(AF_INET, SOCK_STREAM, 0);
+		socket = ::socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
 		if (socket < 0)
 		{
 			ERROR("socket() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
