@@ -46,8 +46,6 @@ namespace inet
 	{
 		static log_console _log_(stdout);
 		static log_console _err_(stderr);
-
-# if defined(linux)
 		
 		inline static SSL_CTX* init_server_ctx(const SSL_METHOD* method = DTLSv1_2_server_method())
 		{
@@ -147,8 +145,6 @@ namespace inet
 				PRINTLN(stream, "No certificates.");
 			}
 		}
-
-# endif
 	}
 	
 	template <typename type>
@@ -163,7 +159,7 @@ namespace inet
 	inline EVP_PKEY* generate_key(std::string& error, const char* ec_type_name = "secp521r1")
 	{
 		/* Allocate memory for the EVP_PKEY structure. */
-		EVP_PKEY* pkey = EVP_PKEY_new();
+		auto* pkey = EVP_PKEY_new();
 		if (!pkey)
 		{
 			error = "Unable to create EVP_PKEY structure.";
@@ -171,7 +167,7 @@ namespace inet
 		}
 		
 		/* Allocate memory for the EC_KEY structure. */
-		EC_KEY* ec_key = EC_KEY_new_by_curve_name(OBJ_txt2nid(ec_type_name));
+		auto* ec_key = EC_KEY_new_by_curve_name(OBJ_txt2nid(ec_type_name));
 		if (!ec_key)
 		{
 			error = "Unable to create EC_KEY structure.";
@@ -196,7 +192,6 @@ namespace inet
 			return nullptr;
 		}
 		
-		EC_KEY_free(ec_key);
 		return pkey;
 	}
 
@@ -206,7 +201,7 @@ namespace inet
 			long serial_number = 1L, long valid_from = 0L, long valid_to = 31536000L)
 	{
 		/* Allocate memory for the X509 structure. */
-		X509* x509 = X509_new();
+		auto* x509 = X509_new();
 		if (!x509)
 		{
 			error = "Unable to create X509 structure.";
@@ -224,7 +219,7 @@ namespace inet
 		X509_set_pubkey(x509, pkey);
 		
 		/* We want to copy the subject name to the issuer name. */
-		X509_NAME* name = X509_get_subject_name(x509);
+		auto* name = X509_get_subject_name(x509);
 		
 		/* Set the country code and common name. */
 		X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC, (unsigned char*)country, ::strlen(country), -1, 0);
@@ -234,12 +229,11 @@ namespace inet
 		/* Now set the issuer name. */
 		X509_set_issuer_name(x509, name);
 		
-		X509_NAME_free(name);
-		
 		/* Actually sign the certificate with our key. */
-		if (!X509_sign(x509, pkey, EVP_sha1()))
+		if (!X509_sign(x509, pkey, EVP_sha256()))
 		{
 			error = "Error signing certificate.";
+			X509_NAME_free(name);
 			X509_free(x509);
 			return nullptr;
 		}
