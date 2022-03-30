@@ -85,11 +85,13 @@ namespace inet
 			return ctx;
 		}
 		
-		inline static bool load_certificates(SSL_CTX* ctx, const char* cert_file, const char* key_file)
+		inline static int verify_callback(int, X509_STORE_CTX*)
 		{
-			if (SSL_CTX_load_verify_locations(ctx, cert_file, key_file) != 1)
-				ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, new log_console(stderr));
-			
+			return 1;
+		}
+		
+		inline static bool load_certificates_server(SSL_CTX* ctx, const char* cert_file, const char* key_file)
+		{
 			if (SSL_CTX_set_default_verify_paths(ctx) != 1)
 				ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, new log_console(stderr));
 			
@@ -117,11 +119,92 @@ namespace inet
 			}
 			
 			/** Force the client-side have a certificate **/
-			SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, nullptr);
+			SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, verify_callback);
 			SSL_CTX_set_verify_depth(ctx, 4);
 			
 			return true;
 		}
+		
+		inline static bool load_certificates_client(SSL_CTX* ctx, const char* cert_file, const char* key_file)
+		{
+			if (SSL_CTX_set_default_verify_paths(ctx) != 1)
+				ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, new log_console(stderr));
+			
+			/** set the local certificate from CertFile **/
+			if (SSL_CTX_use_certificate_file(ctx, cert_file, SSL_FILETYPE_PEM) <= 0)
+			{
+				ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, new log_console(stderr));
+				return false;
+			}
+			
+			/** set the private key from KeyFile (may be the same as CertFile) **/
+			SSL_CTX_set_default_passwd_cb_userdata(ctx, (void*)"14880");
+			if (SSL_CTX_use_PrivateKey_file(ctx, key_file, SSL_FILETYPE_PEM) <= 0)
+			{
+				ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, new log_console(stderr));
+				return false;
+			}
+			
+			/** verify private key **/
+			if (!SSL_CTX_check_private_key(ctx))
+			{
+				*new log_console(stderr) << log_console::l_localtime << l_location << color::red
+										 << "Private key does not match the public certificate" << ENDENTLN;
+				return false;
+			}
+			
+			/** Force the client-side have a certificate **/
+			SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, verify_callback);
+			SSL_CTX_set_verify_depth(ctx, 4);
+			
+			return true;
+		}
+
+//		inline static bool load_certificate(EVP_PKEY** key, X509** cert, const char* key_path, const char* cert_path)
+//		{
+//			BIO* bio = nullptr;
+//			*cert = nullptr;
+//			*key = nullptr;
+//
+//			/* Load CA public key. */
+//			bio = BIO_new(BIO_s_file());
+//			if (!BIO_read_filename(bio, cert_path))
+//			{
+//				BIO_free_all(bio);
+//				X509_free(*cert);
+//				EVP_PKEY_free(*key);
+//				return false;
+//			}
+//			*cert = PEM_read_bio_X509(bio, nullptr, nullptr, nullptr);
+//			if (!*cert)
+//			{
+//				BIO_free_all(bio);
+//				X509_free(*cert);
+//				EVP_PKEY_free(*key);
+//				return false;
+//			}
+//			BIO_free_all(bio);
+//
+//			/* Load CA private key. */
+//			bio = BIO_new(BIO_s_file());
+//			if (!BIO_read_filename(bio, key_path))
+//			{
+//				BIO_free_all(bio);
+//				X509_free(*cert);
+//				EVP_PKEY_free(*key);
+//				return false;
+//			}
+//			*key = PEM_read_bio_PrivateKey(bio, nullptr, nullptr, nullptr);
+//			if (!*key)
+//			{
+//				BIO_free_all(bio);
+//				X509_free(*cert);
+//				EVP_PKEY_free(*key);
+//				return false;
+//			}
+//			BIO_free_all(bio);
+//			return true;
+//		}
 		
 		inline static void print_cert_info(SSL* ssl, log_console& stream)
 		{
@@ -195,6 +278,7 @@ namespace inet
 		return pkey;
 	}
 
+
 /// Generates a self-signed x509 certificate.
 	inline X509* generate_x509(
 			std::string& error, EVP_PKEY* pkey, const char* country, const char* organization, const char* certificate_name,
@@ -222,9 +306,9 @@ namespace inet
 		auto* name = X509_get_subject_name(x509);
 		
 		/* Set the country code and common name. */
-		X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC, (unsigned char*)country, ::strlen(country), -1, 0);
-		X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC, (unsigned char*)organization, ::strlen(organization), -1, 0);
-		X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, (unsigned char*)certificate_name, ::strlen(certificate_name), -1, 0);
+		X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC, (unsigned char*)country, ::strlen(country), 1, 0);
+		X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC, (unsigned char*)organization, ::strlen(organization), 2, 0);
+		X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, (unsigned char*)certificate_name, ::strlen(certificate_name), 3, 0);
 		
 		/* Now set the issuer name. */
 		X509_set_issuer_name(x509, name);
@@ -698,7 +782,7 @@ namespace inet
 			ctx = __detail__::init_server_ctx();
 			
 			LOG << DEBUG_COLOR << "load_certificates()..." << ENDENTLN;
-			if (!__detail__::load_certificates(ctx, this->cert_file.c_str(), this->key_file.c_str()))
+			if (!__detail__::load_certificates_server(ctx, this->cert_file.c_str(), this->key_file.c_str()))
 			{
 				ERROR("load_certificates() returned " << false << color::red << ". this = " << this);
 			}
@@ -876,11 +960,14 @@ namespace inet
 	{
 		ssize_t wrote;
 		this->success = true;
-		if (this->ssl && (wrote = SSL_write(this->ssl, data, size)) <= 0)
+		if (this->ssl)
 		{
-			ERR << "this = " << this << ENDENTLN;
-			ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, &__detail__::_err_);
-			this->success = false;
+			if ((wrote = SSL_write(this->ssl, data, size) <= 0))
+			{
+				ERR << "this = " << this << ENDENTLN;
+				ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, &__detail__::_err_);
+				this->success = false;
+			}
 		}
 		else if ((wrote = ::send(this->socket, data, size, 0)) <= 0)
 		{
@@ -948,7 +1035,7 @@ namespace inet
 			if (!this->cert_file.empty() && !this->key_file.empty())
 			{
 				LOG << DEBUG_COLOR << "loading certificates..." << ENDENTLN;
-				if (!__detail__::load_certificates(ctx, this->cert_file.c_str(), this->key_file.c_str()))
+				if (!__detail__::load_certificates_client(ctx, this->cert_file.c_str(), this->key_file.c_str()))
 				{
 					ERROR("load_certificates() returned " << false << color::red << ". this = " << this);
 				}
@@ -981,6 +1068,7 @@ namespace inet
 				ERR << "this = " << this << ENDENTLN;
 				ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, &__detail__::_err_);
 				ssl = nullptr;
+				throw std::runtime_error("SSL_connect() failed");
 			}
 			
 			__detail__::print_cert_info(ssl, __detail__::_log_);
