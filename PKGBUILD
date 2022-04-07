@@ -9,7 +9,7 @@ license=('GPL')
 depends=("log-console>=1.17-1")
 makedepends=()
 source=("local://inet-comm")
-md5sums=("SKIP")
+md5sums=("9409725a5e1448b6aad6bca851a6aa23")
 # install=inet-comm.install
 
 package()
