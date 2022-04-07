@@ -5,7 +5,7 @@ pkgrel=0
 pkgdesc="ipv4 internet tcp socket c++ library"
 arch=("x86_64")
 url="https://github.com/imperzer0/inet-comm"
-license=('GPL')
+license=('GPL3')
 depends=("log-console>=1.17-1")
 makedepends=()
 source=("local://inet-comm")
