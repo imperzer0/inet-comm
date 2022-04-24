@@ -42,28 +42,26 @@ namespace inet
 	class input_steam
 	{
 	public:
+		inline input_steam() : bio(nullptr)
+		{ }
+		
 		inline input_steam(const std::string& cert_file) : bio(BIO_new(BIO_s_file()))
-		{
-			BIO_read_filename(bio, cert_file.c_str());
-		}
+		{ BIO_read_filename(bio, cert_file.c_str()); }
 		
 		inline input_steam(const std::vector<uint8_t>& cert) : bio(BIO_new(BIO_s_mem()))
-		{
-			BIO_set_mem_buf(bio, cert.data(), cert.size());
-		}
+		{ BIO_set_mem_buf(bio, cert.data(), cert.size()); }
 		
 		inline input_steam(int fd) : bio(BIO_new_fd(fd, BIO_CLOSE))
 		{ }
 		
-		inline BIO* raw()
-		{
-			return bio;
-		}
+		inline operator BIO*() const
+		{ return bio; }
+		
+		inline operator bool() const
+		{ return bio != nullptr; }
 		
 		inline ~input_steam()
-		{
-			BIO_free_all(bio);
-		}
+		{ BIO_free_all(bio); }
 	
 	private:
 		BIO* bio;
@@ -72,42 +70,29 @@ namespace inet
 	class loader
 	{
 	public:
+		inline loader() = default;
+		
 		inline loader(const input_steam& cert, const input_steam& pkey) : cert(cert), pkey(pkey)
 		{ }
 		
 		inline X509* load_cert()
 		{
-			return PEM_read_bio_X509(cert.raw(), nullptr, nullptr, nullptr);
+			return PEM_read_bio_X509(cert, nullptr, nullptr, nullptr);
 		}
 		
 		inline EVP_PKEY* load_pkey()
 		{
-			return PEM_read_bio_PrivateKey(pkey.raw(), nullptr, nullptr, nullptr);
+			return PEM_read_bio_PrivateKey(pkey, nullptr, nullptr, nullptr);
+		}
+		
+		inline operator bool() const
+		{
+			return cert && pkey;
 		}
 	
 	private:
 		input_steam cert;
 		input_steam pkey;
-	};
-	
-	class key_loader
-	{
-	public:
-		inline key_loader(const std::string& key_file) : bio_pkey(BIO_new(BIO_s_file()))
-		{
-			BIO_read_filename(bio_pkey, key_file.c_str());
-		}
-		
-		inline key_loader(const std::vector<uint8_t>& key) : bio_pkey(BIO_new(BIO_s_mem()))
-		{
-			BIO_set_mem_buf(bio_pkey, key.data(), key.size());
-		}
-		
-		inline key_loader(int fd) : bio_pkey(BIO_new_fd(fd, BIO_CLOSE))
-		{ }
-	
-	private:
-		BIO* bio_pkey;
 	};
 	
 	
@@ -650,7 +635,7 @@ namespace inet
 		
 		inline server(
 				int max_clients, const inet_address& address, client_process_function process_function,
-				void* extra, const std::string& cert_file, const std::string& key_file);
+				void* extra, std::shared_ptr<loader> crt);
 		
 		inline virtual bool run(bool wait = true);
 		
@@ -658,7 +643,8 @@ namespace inet
 		
 		inline static void wait_for_all_servers();
 		
-		[[nodiscard]] inline virtual int get_socket() const;
+		[[nodiscard]] inline int get_socket() const
+		{ return socket; }
 		
 		[[nodiscard]] inline virtual int get_max_clients() const
 		{ return max_clients; }
@@ -668,12 +654,6 @@ namespace inet
 		
 		[[nodiscard]] inline virtual client_process_function get_process_function() const
 		{ return process_function; }
-		
-		[[nodiscard]] inline virtual const std::string& get_cert_file() const
-		{ return cert_file; }
-		
-		[[nodiscard]] inline virtual const std::string& get_key_file() const
-		{ return key_file; }
 		
 		inline ~server();
 		
@@ -694,8 +674,6 @@ namespace inet
 		client_process_function process_function;
 		static pthread_mutex_t client_process_mutex;
 		static pthread_mutex_t clients_counter_mutex;
-		std::string cert_file;
-		std::string key_file;
 		static int server_threads;
 		static pthread_mutex_t server_threads_counter_mutex;
 	};
@@ -735,7 +713,7 @@ namespace inet
 	class client : public inet_io
 	{
 	public:
-		inline client(const inet_address& server_address, bool ssl_connection, const std::string& cert_file, const std::string& key_file);
+		inline client(const inet_address& server_address, std::shared_ptr<loader> crt);
 		
 		[[nodiscard]] inline uint16_t get_port() const
 		{ return this->server_address.get_port(); }
@@ -766,8 +744,8 @@ namespace inet
 	
 	inline server::server(
 			int max_clients, const inet_address& address, client_process_function process_function, void* extra = nullptr,
-			const std::string& cert_file = "", const std::string& key_file = "")
-			: max_clients(max_clients), address(address), process_function(process_function), extra(extra), cert_file(cert_file), key_file(key_file)
+			std::shared_ptr<loader> crt = std::make_shared<loader>())
+			: max_clients(max_clients), address(address), process_function(process_function), extra(extra)
 	{
 		LOG << DEBUG_COLOR << "socket()..." << color::reset << "\n"
 			<< DEBUG_COLOR << "server address: " << color::blue_bg << color::black << address.get_address() << color::reset << DEBUG_COLOR << ";"
@@ -799,14 +777,13 @@ namespace inet
 			return;
 		}
 		
-		if (!this->cert_file.empty() && !this->key_file.empty())
+		if (crt)
 		{
 			LOG << DEBUG_COLOR << "init_server_ctx()..." << ENDENTLN;
 			ctx = __detail__::init_server_ctx();
 			
 			LOG << DEBUG_COLOR << "load_certificates()..." << ENDENTLN;
-			loader l(cert_file, key_file);
-			if (!__detail__::load_certificates_server(ctx, l.load_cert(), l.load_pkey()))
+			if (!__detail__::load_certificates_server(ctx, crt->load_cert(), crt->load_pkey()))
 			{
 				ERROR("load_certificates() returned " << false << color::red << ". this = " << this);
 			}
@@ -964,11 +941,6 @@ namespace inet
 		return nullptr;
 	}
 	
-	inline int server::get_socket() const
-	{
-		return socket;
-	}
-	
 	inline server::~server()
 	{
 		LOG << DEBUG_COLOR << "destruction of server(); this = " << this << ENDENTLN;
@@ -1035,8 +1007,8 @@ namespace inet
 // #definition-begin client
 	
 	inline client::client(
-			const inet_address& server_address, bool ssl_connection = false, const std::string& cert_file = "", const std::string& key_file = "")
-			: server_address(server_address), cert_file(cert_file), key_file(key_file)
+			const inet_address& server_address, std::shared_ptr<loader> crt = nullptr)
+			: server_address(server_address)
 	{
 		LOG << DEBUG_COLOR << "socket init..." << color::reset << "\n"
 			<< DEBUG_COLOR << "server address: " << color::blue_bg << color::black << server_address.get_address() << DEBUG_COLOR << ";"
@@ -1052,17 +1024,18 @@ namespace inet
 		}
 		
 		ctx = nullptr;
-		if (ssl_connection)
+		if (crt && *crt)
 		{
 			LOG << DEBUG_COLOR << "initializing ctx..." << ENDENTLN;
 			ctx = __detail__::init_client_ctx();
 			if (!this->cert_file.empty() && !this->key_file.empty())
 			{
 				LOG << DEBUG_COLOR << "loading certificates..." << ENDENTLN;
-				loader l(cert_file, key_file);
-				if (!__detail__::load_certificates_client(ctx, l.load_cert(), l.load_pkey()))
+				if (!__detail__::load_certificates_client(ctx, crt->load_cert(), crt->load_pkey()))
 				{
 					ERROR("load_certificates() returned " << false << color::red << ". this = " << this);
+					SSL_CTX_free(ctx);
+					ctx = nullptr;
 				}
 			}
 		}
@@ -1075,7 +1048,7 @@ namespace inet
 			throw std::runtime_error("connect() failed");
 		}
 		
-		if (ssl_connection)
+		if (ctx)
 		{
 			if (!(ssl = SSL_new(ctx)))
 			{
