@@ -1,16 +1,17 @@
 pkgname="inet-comm"
 epoch=3
-pkgver=6
+pkgver=7
 pkgrel=0
 pkgdesc="ipv4 internet tcp socket c++ library"
 arch=("x86_64")
-url="https://github.com/imperzer0/inet-comm"
+author="imperzer0"
+url="https://github.com/$pkgname/$pkgname"
 license=('GPL3')
 depends=("log-console>=1.17-1")
 makedepends=()
-source=("local://inet-comm")
-md5sums=("9409725a5e1448b6aad6bca851a6aa23")
-# install=inet-comm.install
+_prefix_src="local:/"
+source=("$_prefix_src/$pkgname")
+md5sums=("520684ecb0d62c681886092e0584bf4a")
 
 package()
 {

@@ -18,30 +18,99 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 
-#define LOG_PREFIX log_console::l_lock << log_console::l_localtime << l_location
+#define PRINT_PREFIX log_console::l_lock << log_console::l_localtime << l_location
 #define LOG_COLOR color::yellow << color::italic
 #define DEBUG_COLOR color::faint << color::yellow
-#define ERR_PREFIX log_console::l_lock << log_console::l_localtime << l_location
 
-#define LOG (__detail__::_log_ << LOG_PREFIX)
-#define ERR (__detail__::_err_ << ERR_PREFIX)
-#define ENDENT color::reset << log_console::l_unlock
+#define LOG (__detail__::_log_ << PRINT_PREFIX)
+#define ERR (__detail__::_err_ << PRINT_PREFIX)
 #define ENDENTLN color::reset << log_console::l_endent
 
 #define ERROR(message) (ERR << color::red << color::bold << "error" << color::reset << " : " << color::red << color::italic << message << color::reset << color::red << "." << ENDENTLN)
-#define FATAL_ERROR(message) ERROR(message); throw std::runtime_error(message)
-#define PRINT(stream, message) ((stream) << LOG_PREFIX << LOG_COLOR << message << ENDENT)
-#define PRINTLN(stream, message) ((stream) << LOG_PREFIX << LOG_COLOR << message << ENDENTLN)
+#define PRINTLN(stream, message) ((stream) << PRINT_PREFIX << LOG_COLOR << message << ENDENTLN)
 
-#define DEFAULT_ERROR_HANDLER [](const char* str, size_t size, void* err_stream) { *static_cast<log_console*>(err_stream) << ERR_PREFIX << color::red << str << ENDENTLN; return 0; }
+#define DEFAULT_ERROR_HANDLER [](const char* str, size_t size, void* err_stream) { *static_cast<log_console*>(err_stream) << PRINT_PREFIX << color::red << str << ENDENTLN; return 0; }
 
 #include <cstring>
 #include <iostream>
 #include <map>
 #include <list>
+#include <vector>
 
 namespace inet
 {
+	class input_steam
+	{
+	public:
+		inline input_steam(const std::string& cert_file) : bio(BIO_new(BIO_s_file()))
+		{
+			BIO_read_filename(bio, cert_file.c_str());
+		}
+		
+		inline input_steam(const std::vector<uint8_t>& cert) : bio(BIO_new(BIO_s_mem()))
+		{
+			BIO_set_mem_buf(bio, cert.data(), cert.size());
+		}
+		
+		inline input_steam(int fd) : bio(BIO_new_fd(fd, BIO_CLOSE))
+		{ }
+		
+		inline BIO* raw()
+		{
+			return bio;
+		}
+		
+		inline ~input_steam()
+		{
+			BIO_free_all(bio);
+		}
+	
+	private:
+		BIO* bio;
+	};
+	
+	class loader
+	{
+	public:
+		inline loader(const input_steam& cert, const input_steam& pkey) : cert(cert), pkey(pkey)
+		{ }
+		
+		inline X509* load_cert()
+		{
+			return PEM_read_bio_X509(cert.raw(), nullptr, nullptr, nullptr);
+		}
+		
+		inline EVP_PKEY* load_pkey()
+		{
+			return PEM_read_bio_PrivateKey(pkey.raw(), nullptr, nullptr, nullptr);
+		}
+	
+	private:
+		input_steam cert;
+		input_steam pkey;
+	};
+	
+	class key_loader
+	{
+	public:
+		inline key_loader(const std::string& key_file) : bio_pkey(BIO_new(BIO_s_file()))
+		{
+			BIO_read_filename(bio_pkey, key_file.c_str());
+		}
+		
+		inline key_loader(const std::vector<uint8_t>& key) : bio_pkey(BIO_new(BIO_s_mem()))
+		{
+			BIO_set_mem_buf(bio_pkey, key.data(), key.size());
+		}
+		
+		inline key_loader(int fd) : bio_pkey(BIO_new_fd(fd, BIO_CLOSE))
+		{ }
+	
+	private:
+		BIO* bio_pkey;
+	};
+	
+	
 	namespace __detail__ __attribute__((visibility("hidden")))
 	{
 		static log_console _log_(stdout);
@@ -90,27 +159,27 @@ namespace inet
 			return 1;
 		}
 		
-		inline static bool load_certificates_server(SSL_CTX* ctx, const char* cert_file, const char* key_file)
+		inline static bool load_certificates_server(SSL_CTX* ctx, X509* cert, EVP_PKEY* pkey)
 		{
 			if (SSL_CTX_set_default_verify_paths(ctx) != 1)
 				ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, new log_console(stderr));
 			
-			/** set the local certificate from CertFile **/
-			if (SSL_CTX_use_certificate_file(ctx, cert_file, SSL_FILETYPE_PEM) <= 0)
+			/** Set the local certificate from CertFile **/
+			if (SSL_CTX_use_certificate(ctx, cert) <= 0)
 			{
 				ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, new log_console(stderr));
 				return false;
 			}
 			
-			/** set the private key from KeyFile (may be the same as CertFile) **/
+			/** Set the private key from KeyFile (may be the same as CertFile) **/
 			SSL_CTX_set_default_passwd_cb_userdata(ctx, (void*)"14880");
-			if (SSL_CTX_use_PrivateKey_file(ctx, key_file, SSL_FILETYPE_PEM) <= 0)
+			if (SSL_CTX_use_PrivateKey(ctx, pkey) <= 0)
 			{
 				ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, new log_console(stderr));
 				return false;
 			}
 			
-			/** verify private key **/
+			/** Verify private key **/
 			if (!SSL_CTX_check_private_key(ctx))
 			{
 				*new log_console(stderr) << log_console::l_localtime << l_location << color::red
@@ -125,27 +194,27 @@ namespace inet
 			return true;
 		}
 		
-		inline static bool load_certificates_client(SSL_CTX* ctx, const char* cert_file, const char* key_file)
+		inline static bool load_certificates_client(SSL_CTX* ctx, X509* cert, EVP_PKEY* pkey)
 		{
 			if (SSL_CTX_set_default_verify_paths(ctx) != 1)
 				ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, new log_console(stderr));
 			
-			/** set the local certificate from CertFile **/
-			if (SSL_CTX_use_certificate_file(ctx, cert_file, SSL_FILETYPE_PEM) <= 0)
+			/** Set the local certificate from CertFile **/
+			if (SSL_CTX_use_certificate(ctx, cert) <= 0)
 			{
 				ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, new log_console(stderr));
 				return false;
 			}
 			
-			/** set the private key from KeyFile (may be the same as CertFile) **/
+			/** Set the private key from KeyFile (may be the same as CertFile) **/
 			SSL_CTX_set_default_passwd_cb_userdata(ctx, (void*)"14880");
-			if (SSL_CTX_use_PrivateKey_file(ctx, key_file, SSL_FILETYPE_PEM) <= 0)
+			if (SSL_CTX_use_PrivateKey(ctx, pkey) <= 0)
 			{
 				ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, new log_console(stderr));
 				return false;
 			}
 			
-			/** verify private key **/
+			/** Verify private key **/
 			if (!SSL_CTX_check_private_key(ctx))
 			{
 				*new log_console(stderr) << log_console::l_localtime << l_location << color::red
@@ -159,52 +228,6 @@ namespace inet
 			
 			return true;
 		}
-
-//		inline static bool load_certificate(EVP_PKEY** key, X509** cert, const char* key_path, const char* cert_path)
-//		{
-//			BIO* bio = nullptr;
-//			*cert = nullptr;
-//			*key = nullptr;
-//
-//			/* Load CA public key. */
-//			bio = BIO_new(BIO_s_file());
-//			if (!BIO_read_filename(bio, cert_path))
-//			{
-//				BIO_free_all(bio);
-//				X509_free(*cert);
-//				EVP_PKEY_free(*key);
-//				return false;
-//			}
-//			*cert = PEM_read_bio_X509(bio, nullptr, nullptr, nullptr);
-//			if (!*cert)
-//			{
-//				BIO_free_all(bio);
-//				X509_free(*cert);
-//				EVP_PKEY_free(*key);
-//				return false;
-//			}
-//			BIO_free_all(bio);
-//
-//			/* Load CA private key. */
-//			bio = BIO_new(BIO_s_file());
-//			if (!BIO_read_filename(bio, key_path))
-//			{
-//				BIO_free_all(bio);
-//				X509_free(*cert);
-//				EVP_PKEY_free(*key);
-//				return false;
-//			}
-//			*key = PEM_read_bio_PrivateKey(bio, nullptr, nullptr, nullptr);
-//			if (!*key)
-//			{
-//				BIO_free_all(bio);
-//				X509_free(*cert);
-//				EVP_PKEY_free(*key);
-//				return false;
-//			}
-//			BIO_free_all(bio);
-//			return true;
-//		}
 		
 		inline static void print_cert_info(SSL* ssl, log_console& stream)
 		{
@@ -782,7 +805,8 @@ namespace inet
 			ctx = __detail__::init_server_ctx();
 			
 			LOG << DEBUG_COLOR << "load_certificates()..." << ENDENTLN;
-			if (!__detail__::load_certificates_server(ctx, this->cert_file.c_str(), this->key_file.c_str()))
+			loader l(cert_file, key_file);
+			if (!__detail__::load_certificates_server(ctx, l.load_cert(), l.load_pkey()))
 			{
 				ERROR("load_certificates() returned " << false << color::red << ". this = " << this);
 			}
@@ -822,7 +846,7 @@ namespace inet
 			
 			if (ctx)
 			{
-				ssl = SSL_new(ctx); /** get new SSL state with context **/
+				ssl = SSL_new(ctx); /** raw new SSL state with context **/
 				if (!ssl)
 				{
 					ERROR("SSL_new() returned " << color::italic << color::purple << "nullptr" << ". this = " << this);
@@ -1035,7 +1059,8 @@ namespace inet
 			if (!this->cert_file.empty() && !this->key_file.empty())
 			{
 				LOG << DEBUG_COLOR << "loading certificates..." << ENDENTLN;
-				if (!__detail__::load_certificates_client(ctx, this->cert_file.c_str(), this->key_file.c_str()))
+				loader l(cert_file, key_file);
+				if (!__detail__::load_certificates_client(ctx, l.load_cert(), l.load_pkey()))
 				{
 					ERROR("load_certificates() returned " << false << color::red << ". this = " << this);
 				}
