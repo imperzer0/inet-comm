@@ -247,7 +247,7 @@ namespace inet
 	concept receive_datatype = !std::is_const_v<type> && std::is_arithmetic_v<type>;
 
 /// Generates ECDSA key.
-	inline EVP_PKEY* generate_key(std::string& error, const char* ec_type_name = "secp521r1")
+	inline EVP_PKEY* generate_pkey(std::string& error, const char* ec_type_name = "secp521r1")
 	{
 		/* Allocate memory for the EVP_PKEY structure. */
 		auto* pkey = EVP_PKEY_new();
@@ -286,32 +286,31 @@ namespace inet
 		return pkey;
 	}
 
-
 /// Generates a self-signed x509 certificate.
-	inline X509* generate_x509(
+	inline X509* generate_cert(
 			std::string& error, EVP_PKEY* pkey, const char* country, const char* organization, const char* certificate_name,
 			long serial_number = 1L, long valid_from = 0L, long valid_to = 31536000L)
 	{
 		/* Allocate memory for the X509 structure. */
-		auto* x509 = X509_new();
-		if (!x509)
+		auto* cert = X509_new();
+		if (!cert)
 		{
 			error = "Unable to create X509 structure.";
 			return nullptr;
 		}
 		
 		/* Set the serial number. */
-		ASN1_INTEGER_set(X509_get_serialNumber(x509), serial_number);
+		ASN1_INTEGER_set(X509_get_serialNumber(cert), serial_number);
 		
 		/* This certificate is valid from <valid_from seconds> until exactly <valid_to seconds>. Default from now to one year. */
-		X509_gmtime_adj(X509_get_notBefore(x509), valid_from);
-		X509_gmtime_adj(X509_get_notAfter(x509), valid_to);
+		X509_gmtime_adj(X509_get_notBefore(cert), valid_from);
+		X509_gmtime_adj(X509_get_notAfter(cert), valid_to);
 		
 		/* Set the public key for our certificate. */
-		X509_set_pubkey(x509, pkey);
+		X509_set_pubkey(cert, pkey);
 		
 		/* We want to copy the subject name to the issuer name. */
-		auto* name = X509_get_subject_name(x509);
+		auto* name = X509_get_subject_name(cert);
 		
 		/* Set the country code and common name. */
 		X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC, (unsigned char*)country, ::strlen(country), 1, 0);
@@ -319,22 +318,48 @@ namespace inet
 		X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, (unsigned char*)certificate_name, ::strlen(certificate_name), 3, 0);
 		
 		/* Now set the issuer name. */
-		X509_set_issuer_name(x509, name);
+		X509_set_issuer_name(cert, name);
 		
 		/* Actually sign the certificate with our key. */
-		if (!X509_sign(x509, pkey, EVP_sha256()))
+		if (!X509_sign(cert, pkey, EVP_sha256()))
 		{
 			error = "Error signing certificate.";
 			X509_NAME_free(name);
-			X509_free(x509);
+			X509_free(cert);
 			return nullptr;
 		}
 		
-		return x509;
+		return cert;
+	}
+	
+	inline std::vector<uint8_t> convert(EVP_PKEY* pkey)
+	{
+		std::vector<uint8_t> res;
+		char* buf = nullptr;
+		size_t size;
+		auto stream = open_memstream(&buf, &size);
+		PEM_write_PrivateKey(stream, pkey, nullptr, nullptr, 0, nullptr, nullptr);
+		::fclose(stream);
+		res.assign(buf, buf + size);
+		delete[] buf;
+		return res;
+	}
+	
+	inline std::vector<uint8_t> convert(X509* cert)
+	{
+		std::vector<uint8_t> res;
+		char* buf = nullptr;
+		size_t size;
+		auto stream = open_memstream(&buf, &size);
+		PEM_write_X509(stream, cert);
+		::fclose(stream);
+		res.assign(buf, buf + size);
+		delete[] buf;
+		return res;
 	}
 	
 	inline bool write_certificate_to_disk(
-			std::string& error, EVP_PKEY* pkey, X509* x509,
+			std::string& error, EVP_PKEY* pkey, X509* cert,
 			const char* key_filename = "certificate.key", const char* x509_filename = "certificate.pem")
 	{
 		/* Open the PEM file for writing the key to disk. */
@@ -364,7 +389,7 @@ namespace inet
 		}
 		
 		/* Write the certificate to disk. */
-		ret = ::PEM_write_X509(x509_file, x509);
+		ret = ::PEM_write_X509(x509_file, cert);
 		::fclose(x509_file);
 		
 		if (!ret)
@@ -744,7 +769,7 @@ namespace inet
 	
 	inline server::server(
 			int max_clients, const inet_address& address, client_process_function process_function, void* extra = nullptr,
-			std::shared_ptr<loader> crt = std::make_shared<loader>())
+			std::shared_ptr<loader> crt = nullptr)
 			: max_clients(max_clients), address(address), process_function(process_function), extra(extra)
 	{
 		LOG << DEBUG_COLOR << "socket()..." << color::reset << "\n"
@@ -777,7 +802,7 @@ namespace inet
 			return;
 		}
 		
-		if (crt)
+		if (crt && *crt)
 		{
 			LOG << DEBUG_COLOR << "init_server_ctx()..." << ENDENTLN;
 			ctx = __detail__::init_server_ctx();
