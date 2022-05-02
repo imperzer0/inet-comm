@@ -769,8 +769,6 @@ namespace inet
 	private:
 		inet_address server_address;
 		SSL_CTX* ctx;
-		std::string cert_file;
-		std::string key_file;
 	};
 
 
@@ -1068,15 +1066,12 @@ namespace inet
 		{
 			LOG << DEBUG_COLOR << "initializing ctx..." << ENDENTLN;
 			ctx = __detail__::init_client_ctx();
-			if (!this->cert_file.empty() && !this->key_file.empty())
+			LOG << DEBUG_COLOR << "loading certificates..." << ENDENTLN;
+			if (!__detail__::load_certificates_client(ctx, crt->load_cert(), crt->load_pkey()))
 			{
-				LOG << DEBUG_COLOR << "loading certificates..." << ENDENTLN;
-				if (!__detail__::load_certificates_client(ctx, crt->load_cert(), crt->load_pkey()))
-				{
-					ERROR("load_certificates() returned " << false << color::red << ". this = " << this);
-					SSL_CTX_free(ctx);
-					ctx = nullptr;
-				}
+				ERROR("load_certificates() returned " << false << color::red << ". this = " << this);
+				SSL_CTX_free(ctx);
+				ctx = nullptr;
 			}
 		}
 		
