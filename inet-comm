@@ -35,32 +35,43 @@
 #include <iostream>
 #include <map>
 #include <list>
+#include <utility>
 #include <vector>
+#include <memory>
 
 namespace inet
 {
-	class input_steam
+	class input_stream
 	{
 	public:
-		inline input_steam() : bio(nullptr)
+		template <typename... _Args>
+		static inline std::shared_ptr<input_stream> mkstream(_Args... args)
+		{
+			return std::make_shared<input_stream>(args...);
+		}
+		
+		inline input_stream() : bio(nullptr)
 		{ }
 		
-		inline input_steam(const std::string& cert_file) : bio(BIO_new(BIO_s_file()))
-		{ BIO_read_filename(bio, cert_file.c_str()); }
+		inline input_stream(const std::string& file) : bio(BIO_new(BIO_s_file()))
+		{ BIO_read_filename(bio, file.c_str()); }
 		
-		inline input_steam(const std::vector<uint8_t>& cert) : bio(BIO_new(BIO_s_mem()))
-		{ BIO_set_mem_buf(bio, cert.data(), cert.size()); }
+		inline input_stream(std::shared_ptr<std::vector<uint8_t>> key) : bio(nullptr)
+		{
+			int pipe[2];
+			::pipe(pipe);
+			::write(pipe[1], key->data(), key->size());
+			::close(pipe[1]);
+			bio = BIO_new_fd(pipe[0], BIO_CLOSE);
+		}
 		
-		inline input_steam(int fd) : bio(BIO_new_fd(fd, BIO_CLOSE))
+		inline input_stream(int fd) : bio(BIO_new_fd(fd, BIO_CLOSE))
 		{ }
 		
 		inline operator BIO*() const
 		{ return bio; }
 		
-		inline operator bool() const
-		{ return bio != nullptr; }
-		
-		inline ~input_steam()
+		inline ~input_stream()
 		{ BIO_free_all(bio); }
 	
 	private:
@@ -72,17 +83,21 @@ namespace inet
 	public:
 		inline loader() = default;
 		
-		inline loader(const input_steam& cert, const input_steam& pkey) : cert(cert), pkey(pkey)
+		inline loader(const loader&) = delete;
+		
+		inline loader(loader&&) = delete;
+		
+		inline loader(std::shared_ptr<input_stream> cert, std::shared_ptr<input_stream> pkey) : cert(std::move(cert)), pkey(std::move(pkey))
 		{ }
 		
 		inline X509* load_cert()
 		{
-			return PEM_read_bio_X509(cert, nullptr, nullptr, nullptr);
+			return PEM_read_bio_X509(*cert, nullptr, nullptr, nullptr);
 		}
 		
 		inline EVP_PKEY* load_pkey()
 		{
-			return PEM_read_bio_PrivateKey(pkey, nullptr, nullptr, nullptr);
+			return PEM_read_bio_PrivateKey(*pkey, nullptr, nullptr, nullptr);
 		}
 		
 		inline operator bool() const
@@ -91,8 +106,8 @@ namespace inet
 		}
 	
 	private:
-		input_steam cert;
-		input_steam pkey;
+		std::shared_ptr<input_stream> cert;
+		std::shared_ptr<input_stream> pkey;
 	};
 	
 	
@@ -332,7 +347,7 @@ namespace inet
 		return cert;
 	}
 	
-	inline std::vector<uint8_t> convert(EVP_PKEY* pkey)
+	inline std::shared_ptr<std::vector<uint8_t>> convert(EVP_PKEY* pkey)
 	{
 		std::vector<uint8_t> res;
 		char* buf = nullptr;
@@ -342,10 +357,10 @@ namespace inet
 		::fclose(stream);
 		res.assign(buf, buf + size);
 		delete[] buf;
-		return res;
+		return std::make_shared<std::vector<uint8_t>>(res);
 	}
 	
-	inline std::vector<uint8_t> convert(X509* cert)
+	inline std::shared_ptr<std::vector<uint8_t>> convert(X509* cert)
 	{
 		std::vector<uint8_t> res;
 		char* buf = nullptr;
@@ -355,7 +370,7 @@ namespace inet
 		::fclose(stream);
 		res.assign(buf, buf + size);
 		delete[] buf;
-		return res;
+		return std::make_shared<std::vector<uint8_t>>(res);
 	}
 	
 	inline bool write_certificate_to_disk(
