@@ -10,7 +10,7 @@ depends=("log-console>=1.18-1")
 makedepends=()
 _srcprefix="local:/"
 source=("$_srcprefix/$pkgname")
-md5sums=("dcd3e7dc864d5024f51d207911003944")
+md5sums=("724e233a064358cdf2199fe251870c0c")
 
 package()
 {
