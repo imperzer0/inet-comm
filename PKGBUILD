@@ -1,5 +1,5 @@
 pkgname="inet-comm"
-pkgver=3.9
+pkgver=3.10
 pkgrel=0
 pkgdesc="ipv4 internet tcp socket c++ library"
 arch=("x86_64")

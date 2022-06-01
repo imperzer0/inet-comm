@@ -19,7 +19,6 @@
 #include <openssl/err.h>
 
 #define PRINT_PREFIX log_console::l_lock << log_console::l_localtime << l_location
-#define LOG_COLOR color::yellow << color::italic
 #define DEBUG_COLOR color::faint << color::yellow
 
 #define LOG (__detail__::_log_ << PRINT_PREFIX)
@@ -27,7 +26,6 @@
 #define ENDENTLN color::reset << log_console::l_endent
 
 #define ERROR(message) (ERR << color::red << color::bold << "error" << color::reset << " : " << color::red << color::italic << message << color::reset << color::red << "." << ENDENTLN)
-#define PRINTLN(stream, message) ((stream) << PRINT_PREFIX << LOG_COLOR << message << ENDENTLN)
 
 #define DEFAULT_ERROR_HANDLER [](const char* str, size_t size, void* err_stream) { *static_cast<log_console*>(err_stream) << PRINT_PREFIX << color::red << str << ENDENTLN; return 0; }
 
@@ -44,29 +42,37 @@ namespace inet
 	class input_stream
 	{
 	public:
-		template <typename... _Args>
-		static inline std::shared_ptr<input_stream> mkstream(_Args... args)
+		template <typename... Args>
+		static inline std::unique_ptr<input_stream> mkstream(Args&& ... args)
 		{
-			return std::make_shared<input_stream>(args...);
+			return std::move(std::make_unique<input_stream>(std::move(args)...));
 		}
 		
-		inline input_stream() : bio(nullptr)
+		inline input_stream() noexcept: bio(nullptr)
+		{ }
+		
+		inline input_stream(BIO* bio) noexcept: bio(bio)
 		{ }
 		
 		inline input_stream(const std::string& file) : bio(BIO_new(BIO_s_file()))
 		{ BIO_read_filename(bio, file.c_str()); }
 		
-		inline input_stream(std::shared_ptr<std::vector<uint8_t>> key) : bio(nullptr)
+		inline input_stream(const std::vector<uint8_t>& key) : bio(nullptr)
 		{
 			int pipe[2];
 			::pipe(pipe);
-			::write(pipe[1], key->data(), key->size());
+			::write(pipe[1], key.data(), key.size());
 			::close(pipe[1]);
 			bio = BIO_new_fd(pipe[0], BIO_CLOSE);
 		}
 		
 		inline input_stream(int fd) : bio(BIO_new_fd(fd, BIO_CLOSE))
 		{ }
+		
+		input_stream(const input_stream&) = delete;
+		
+		inline input_stream(input_stream&& stream) noexcept: bio(stream.bio)
+		{ stream.bio = nullptr; }
 		
 		inline operator BIO*() const
 		{ return bio; }
@@ -83,31 +89,29 @@ namespace inet
 	public:
 		inline loader() = default;
 		
-		inline loader(const loader&) = delete;
+		loader(const loader&) = delete;
 		
-		inline loader(loader&&) = delete;
+		loader& operator=(const loader&) = delete;
 		
-		inline loader(std::shared_ptr<input_stream> cert, std::shared_ptr<input_stream> pkey) : cert(std::move(cert)), pkey(std::move(pkey))
+		inline loader(loader&& another) = default;
+		
+		inline loader(std::unique_ptr<input_stream> cert, std::unique_ptr<input_stream> pkey) : cert(std::move(cert)), pkey(std::move(pkey))
 		{ }
 		
 		inline X509* load_cert()
-		{
-			return PEM_read_bio_X509(*cert, nullptr, nullptr, nullptr);
-		}
+		{ return PEM_read_bio_X509(*cert, nullptr, nullptr, nullptr); }
 		
 		inline EVP_PKEY* load_pkey()
-		{
-			return PEM_read_bio_PrivateKey(*pkey, nullptr, nullptr, nullptr);
-		}
+		{ return PEM_read_bio_PrivateKey(*pkey, nullptr, nullptr, nullptr); }
 		
 		inline operator bool() const
-		{
-			return cert && pkey;
-		}
+		{ return cert && pkey; }
+		
+		inline ~loader() = default;
 	
 	private:
-		std::shared_ptr<input_stream> cert;
-		std::shared_ptr<input_stream> pkey;
+		std::unique_ptr<input_stream> cert = nullptr;
+		std::unique_ptr<input_stream> pkey = nullptr;
 	};
 	
 	
@@ -116,7 +120,7 @@ namespace inet
 		static log_console _log_(stdout);
 		static log_console _err_(stderr);
 		
-		inline static SSL_CTX* init_server_ctx(const SSL_METHOD* method = DTLSv1_2_server_method())
+		inline static SSL_CTX* init_server_ctx(const SSL_METHOD* method = DTLS_server_method())
 		{
 			SSL_CTX* ctx;
 			
@@ -135,7 +139,7 @@ namespace inet
 			return ctx;
 		}
 		
-		inline static SSL_CTX* init_client_ctx(const SSL_METHOD* method = DTLSv1_2_client_method())
+		inline static SSL_CTX* init_client_ctx(const SSL_METHOD* method = DTLS_client_method())
 		{
 			SSL_CTX* ctx;
 			
@@ -229,7 +233,7 @@ namespace inet
 			return true;
 		}
 		
-		inline static void print_cert_info(SSL* ssl, log_console& stream)
+		inline static void print_cert_info(SSL* ssl)
 		{
 			X509* cert;
 			char* line;
@@ -237,31 +241,27 @@ namespace inet
 			cert = SSL_get_peer_certificate(ssl); /* Get certificates (if available) */
 			if (cert)
 			{
-				PRINTLN(stream, "Server certificates:");
+				auto log = LOG << "Server certificates:\n";
 				line = X509_NAME_oneline(X509_get_subject_name(cert), nullptr, 0);
-				PRINTLN(stream, "Subject: " << color::blue << line);
+				log << "Subject: " << color::blue << line;
 				delete[] line;
 				line = X509_NAME_oneline(X509_get_issuer_name(cert), nullptr, 0);
-				PRINTLN(stream, "Issuer: " << color::blue << line);
+				log << "Issuer: " << color::blue << line << ENDENTLN;
 				delete[] line;
 				X509_free(cert);
 			}
 			else
 			{
-				PRINTLN(stream, "No certificates.");
+				ERR << "No certificates." << ENDENTLN;
 			}
 		}
+		
+		template <typename T>
+		inline void delete_buffer(T* buf)
+		{ delete[] buf; }
 	}
 	
-	template <typename type>
-	concept send_datatype = std::is_same_v<std::remove_reference_t<type>, const char*> || std::is_same_v<std::remove_cvref_t<type>, const wchar_t*> ||
-							std::is_same_v<std::remove_cvref_t<type>, std::string> || std::is_same_v<std::remove_cvref_t<type>, std::wstring> ||
-							std::is_arithmetic_v<type>;
-	
-	template <typename type>
-	concept receive_datatype = !std::is_const_v<type> && std::is_arithmetic_v<type>;
-
-/// Generates ECDSA key.
+	/// Generates ECDSA key.
 	inline EVP_PKEY* generate_pkey(std::string& error, const char* ec_type_name = "secp521r1")
 	{
 		/* Allocate memory for the EVP_PKEY structure. */
@@ -303,7 +303,7 @@ namespace inet
 
 /// Generates a self-signed x509 certificate.
 	inline X509* generate_cert(
-			std::string& error, EVP_PKEY* pkey, const char* country, const char* organization, const char* certificate_name,
+			std::string& error, EVP_PKEY* pkey, const std::string& country, const std::string& organization, const std::string& certificate_name,
 			long serial_number = 1L, long valid_from = 0L, long valid_to = 31536000L)
 	{
 		/* Allocate memory for the X509 structure. */
@@ -328,9 +328,18 @@ namespace inet
 		auto* name = X509_get_subject_name(cert);
 		
 		/* Set the country code and common name. */
-		X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC, (unsigned char*)country, ::strlen(country), 1, 0);
-		X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC, (unsigned char*)organization, ::strlen(organization), 2, 0);
-		X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, (unsigned char*)certificate_name, ::strlen(certificate_name), 3, 0);
+		X509_NAME_add_entry_by_txt(
+				name, "C", MBSTRING_ASC,
+				(unsigned char*)country.data(), country.size(), 1, 0
+		);
+		X509_NAME_add_entry_by_txt(
+				name, "O", MBSTRING_ASC,
+				(unsigned char*)organization.data(), organization.size(), 2, 0
+		);
+		X509_NAME_add_entry_by_txt(
+				name, "CN", MBSTRING_ASC,
+				(unsigned char*)certificate_name.data(), certificate_name.size(), 3, 0
+		);
 		
 		/* Now set the issuer name. */
 		X509_set_issuer_name(cert, name);
@@ -347,30 +356,30 @@ namespace inet
 		return cert;
 	}
 	
-	inline std::shared_ptr<std::vector<uint8_t>> convert(EVP_PKEY* pkey)
+	inline auto convert(EVP_PKEY* pkey)
 	{
-		std::vector<uint8_t> res;
 		char* buf = nullptr;
 		size_t size;
 		auto stream = open_memstream(&buf, &size);
 		PEM_write_PrivateKey(stream, pkey, nullptr, nullptr, 0, nullptr, nullptr);
 		::fclose(stream);
-		res.assign(buf, buf + size);
-		delete[] buf;
-		return std::make_shared<std::vector<uint8_t>>(res);
+		std::unique_ptr<char, decltype(&__detail__::delete_buffer<char>)> deleter(
+				buf, &__detail__::delete_buffer<char>
+		);
+		return std::move(std::vector<uint8_t>(buf, buf + size));
 	}
 	
-	inline std::shared_ptr<std::vector<uint8_t>> convert(X509* cert)
+	inline auto convert(X509* cert)
 	{
-		std::vector<uint8_t> res;
 		char* buf = nullptr;
 		size_t size;
 		auto stream = open_memstream(&buf, &size);
 		PEM_write_X509(stream, cert);
 		::fclose(stream);
-		res.assign(buf, buf + size);
-		delete[] buf;
-		return std::make_shared<std::vector<uint8_t>>(res);
+		std::unique_ptr<char, decltype(&__detail__::delete_buffer<char>)> deleter(
+				buf, &__detail__::delete_buffer<char>
+		);
+		return std::move(std::vector<uint8_t>(buf, buf + size));
 	}
 	
 	inline bool write_certificate_to_disk(
@@ -460,9 +469,9 @@ namespace inet
 		int if_mtu = -1;
 	} ifinfo, * pifinfo;
 	
-	inline static struct ifinfo& get_interface_information(const char* interface_name)
+	inline static auto get_interface_information(const char* interface_name)
 	{
-		auto& result = *new ifinfo{ };
+		ifinfo result{ };
 		int fd = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
 		
 		/* define the ifr_name - port name where network attached */
@@ -526,9 +535,9 @@ namespace inet
 		return result;
 	}
 	
-	inline static std::list<struct ifaddrs*>& list_all_network_interfaces()
+	inline static auto list_all_network_interfaces()
 	{
-		auto& result = *new std::remove_cvref_t<decltype(list_all_network_interfaces())>();
+		std::list<struct ifaddrs*> result;
 		
 		struct ifaddrs* ifaddr, * ifa;
 		
@@ -543,10 +552,11 @@ namespace inet
 			if (ifa->ifa_addr == nullptr || ifa->ifa_addr->sa_family != AF_PACKET) continue;
 			result.push_back(ifa);
 		}
+		
 		return result;
 	}
 	
-	inline in_addr inet_aton(const char* address)
+	inline in_addr aton(const char* address)
 	{
 		in_addr ret{0};
 		::inet_aton(address, &ret);
@@ -600,7 +610,7 @@ namespace inet
 		{ }
 		
 		inline inet_address(const std::string& address, uint16_t port)
-				: inet_address(inet_aton(address.c_str()), port)
+				: inet_address(aton(address.c_str()), port)
 		{ }
 		
 		inline static inet_address& from_ipv4(const std::string& address, uint16_t default_port)
@@ -675,7 +685,7 @@ namespace inet
 		
 		inline server(
 				int max_clients, const inet_address& address, client_process_function process_function,
-				void* extra, std::shared_ptr<loader> crt);
+				void* extra, loader&& crt);
 		
 		inline virtual bool run(bool wait = true);
 		
@@ -753,7 +763,7 @@ namespace inet
 	class client : public inet_io
 	{
 	public:
-		inline client(const inet_address& server_address, std::shared_ptr<loader> crt);
+		inline client(const inet_address& server_address, loader&& crt);
 		
 		[[nodiscard]] inline uint16_t get_port() const
 		{ return this->server_address.get_port(); }
@@ -782,7 +792,7 @@ namespace inet
 	
 	inline server::server(
 			int max_clients, const inet_address& address, client_process_function process_function, void* extra = nullptr,
-			std::shared_ptr<loader> crt = nullptr)
+			loader&& crt = { })
 			: max_clients(max_clients), address(address), process_function(process_function), extra(extra)
 	{
 		LOG << DEBUG_COLOR << "socket()..." << color::reset << "\n"
@@ -815,13 +825,13 @@ namespace inet
 			return;
 		}
 		
-		if (crt && *crt)
+		if (crt)
 		{
 			LOG << DEBUG_COLOR << "init_server_ctx()..." << ENDENTLN;
 			ctx = __detail__::init_server_ctx();
 			
 			LOG << DEBUG_COLOR << "load_certificates()..." << ENDENTLN;
-			if (!__detail__::load_certificates_server(ctx, crt->load_cert(), crt->load_pkey()))
+			if (!__detail__::load_certificates_server(ctx, crt.load_cert(), crt.load_pkey()))
 			{
 				ERROR("load_certificates() returned " << false << color::red << ". this = " << this);
 			}
@@ -885,7 +895,7 @@ namespace inet
 					}
 				}
 				
-				__detail__::print_cert_info(ssl, __detail__::_log_);
+				__detail__::print_cert_info(ssl);
 			}
 			
 			auto* dat = new server_client_data{ };
@@ -1045,7 +1055,7 @@ namespace inet
 // #definition-begin client
 	
 	inline client::client(
-			const inet_address& server_address, std::shared_ptr<loader> crt = nullptr)
+			const inet_address& server_address, loader&& crt = { })
 			: server_address(server_address)
 	{
 		LOG << DEBUG_COLOR << "socket init..." << color::reset << "\n"
@@ -1062,12 +1072,12 @@ namespace inet
 		}
 		
 		ctx = nullptr;
-		if (crt && *crt)
+		if (crt)
 		{
 			LOG << DEBUG_COLOR << "initializing ctx..." << ENDENTLN;
 			ctx = __detail__::init_client_ctx();
 			LOG << DEBUG_COLOR << "loading certificates..." << ENDENTLN;
-			if (!__detail__::load_certificates_client(ctx, crt->load_cert(), crt->load_pkey()))
+			if (!__detail__::load_certificates_client(ctx, crt.load_cert(), crt.load_pkey()))
 			{
 				ERROR("load_certificates() returned " << false << color::red << ". this = " << this);
 				SSL_CTX_free(ctx);
@@ -1104,7 +1114,7 @@ namespace inet
 				throw std::runtime_error("SSL_connect() failed");
 			}
 			
-			__detail__::print_cert_info(ssl, __detail__::_log_);
+			__detail__::print_cert_info(ssl);
 		}
 		
 		LOG << DEBUG_COLOR << "success." << ENDENTLN;
