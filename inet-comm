@@ -684,10 +684,10 @@ namespace inet
 		};
 		
 		inline server(
-				int max_clients, const inet_address& address, client_process_function process_function,
+				int max_clients, int timeo, const inet_address& address, client_process_function process_function,
 				void* extra, loader&& crt);
 		
-		inline virtual bool run(bool wait = true);
+		inline virtual bool run(bool wait);
 		
 		inline virtual void run_server_thread(bool wait_for_child_threads);
 		
@@ -696,8 +696,13 @@ namespace inet
 		[[nodiscard]] inline int get_socket() const
 		{ return socket; }
 		
-		[[nodiscard]] inline virtual int get_max_clients() const
+		[[nodiscard]] inline int get_max_clients() const
 		{ return max_clients; }
+		
+		[[nodiscard]] inline int get_timeo() const
+		{ return timeo; }
+		
+		inline void set_timeo(int delay);
 		
 		[[nodiscard]] inline virtual const inet_address& get_address() const
 		{ return this->address; }
@@ -714,12 +719,27 @@ namespace inet
 		
 		inline static void* process_client(void* args);
 		
+		inline void set_sockopts()
+		{
+			struct timeval timeout{timeo / 1000, (timeo % 1000) * 1000};
+			
+			if (setsockopt(socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout) < 0)
+				ERROR("setsockopt() failed " << ::strerrorname_np(errno) << " "
+											 << color::bold << ::strerrordesc_np(errno) << color::reset
+											 << color::red << ". socket : " << socket << ". this = " << this);
+			
+			if (setsockopt(socket, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof timeout) < 0)
+				ERROR("setsockopt() failed " << ::strerrorname_np(errno) << " "
+											 << color::bold << ::strerrordesc_np(errno) << color::reset
+											 << color::red << ". socket : " << socket << ". this = " << this);
+		}
+		
 		pthread_t main_thread = 0;
 		int socket;
 		SSL_CTX* ctx = nullptr;
 		bool wait_for_child_threads = false;
 		
-		int max_clients;
+		int max_clients, timeo;
 		inet_address address;
 		client_process_function process_function;
 		static pthread_mutex_t client_process_mutex;
@@ -763,7 +783,7 @@ namespace inet
 	class client : public inet_io
 	{
 	public:
-		inline client(const inet_address& server_address, loader&& crt);
+		inline client(int timeo, const inet_address& server_address, loader&& crt);
 		
 		[[nodiscard]] inline uint16_t get_port() const
 		{ return this->server_address.get_port(); }
@@ -791,9 +811,10 @@ namespace inet
 	
 	
 	inline server::server(
-			int max_clients, const inet_address& address, client_process_function process_function, void* extra = nullptr,
-			loader&& crt = { })
-			: max_clients(max_clients), address(address), process_function(process_function), extra(extra)
+			int max_clients, int timeo, const inet_address& address,
+			client_process_function process_function, void* extra = nullptr, loader&& crt = { })
+			: max_clients(max_clients), timeo(timeo),
+			  address(address), process_function(process_function), extra(extra)
 	{
 		LOG << DEBUG_COLOR << "socket()..." << color::reset << "\n"
 			<< DEBUG_COLOR << "server address: " << color::blue_bg << color::black << address.get_address() << color::reset << DEBUG_COLOR << ";"
@@ -806,23 +827,23 @@ namespace inet
 		{
 			ERROR("socket() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset
 									 << color::red << ". socket : " << socket << ". this = " << this);
-			return;
+			throw std::runtime_error("socket() failed");
 		}
 		
 		LOG << DEBUG_COLOR << "bind()..." << color::reset << "\n" << DEBUG_COLOR << "this = " << this << DEBUG_COLOR << ";" << ENDENTLN;
 		if (::bind(socket, (struct sockaddr*)&address.address, sizeof(address.address)) < 0)
 		{
-			ERROR("bind() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
-								   << ". this = " << this);
-			return;
+			ERROR("bind() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset
+								   << color::red << ". socket : " << socket << ". this = " << this);
+			throw std::runtime_error("bind() failed");
 		}
 		
 		LOG << DEBUG_COLOR << "listening socket = " << color::reset << socket << DEBUG_COLOR << " ..." << ENDENTLN;
 		if (listen(socket, max_clients) < 0)
 		{
-			ERROR("listen() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
-									 << ". this = " << this);
-			return;
+			ERROR("listen() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset
+									 << color::red << ". socket : " << socket << ". this = " << this);
+			throw std::runtime_error("listen() failed");
 		}
 		
 		if (crt)
@@ -833,7 +854,7 @@ namespace inet
 			LOG << DEBUG_COLOR << "load_certificates()..." << ENDENTLN;
 			if (!__detail__::load_certificates_server(ctx, crt.load_cert(), crt.load_pkey()))
 			{
-				ERROR("load_certificates() returned " << false << color::red << ". this = " << this);
+				ERROR("load_certificates() returned " << false << color::red << ". socket : " << socket << ". this = " << this);
 			}
 		}
 		
@@ -851,72 +872,84 @@ namespace inet
 		
 		int new_socket;
 		
-		while (true)
+		while (!::fcntl(socket, F_GETFD))
 		{
-			if (new_socket = ::accept(socket, (struct sockaddr*)&address, &addrlen); new_socket < 0)
+			struct timeval timeout{timeo / 1000, (timeo % 1000) * 1000};
+			
+			fd_set readfds;
+			FD_ZERO(&readfds);
+			FD_SET(socket, &readfds);
+			
+			if (::select(socket + 1, &readfds, nullptr, nullptr, &timeout) > 0 && !::fcntl(socket, F_GETFD))
 			{
-				ERROR("accept() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno) << color::reset << color::red
-										 << ". this = " << this);
-				return errno == EBADF || errno == EINVAL;
-			}
-			
-			LOG << DEBUG_COLOR << "+====== new connection ======/'" << color::reset << "\n"
-				<< DEBUG_COLOR << "| socket = " << color::reset << new_socket << DEBUG_COLOR << ";" << color::reset << "\n"
-				<< DEBUG_COLOR << "| address = " << color::blue_bg << color::black << ::inet_ntoa(address.sin_addr) << DEBUG_COLOR << ";"
-				<< color::reset << "\n"
-				<< DEBUG_COLOR << "| port = " << color::reset << ::ntohs(address.sin_port) << DEBUG_COLOR << ";" << color::reset << "\n\n"
-				<< DEBUG_COLOR << "+============================\\." << ENDENTLN;
-			
-			SSL* ssl = nullptr;
-			
-			if (ctx)
-			{
-				ssl = SSL_new(ctx); /** raw new SSL state with context **/
-				if (!ssl)
+				if (new_socket = ::accept(socket, (struct sockaddr*)&address, &addrlen); new_socket < 0)
 				{
-					ERROR("SSL_new() returned " << color::italic << color::purple << "nullptr" << ". this = " << this);
-					return true;
+					ERROR("accept() failed " << ::strerrorname_np(errno) << " "
+											 << color::bold << ::strerrordesc_np(errno) << color::reset
+											 << color::red << ". socket : " << socket << ". this = " << this);
+					return errno == EBADF || errno == EINVAL;
 				}
 				
-				if (!SSL_set_fd(ssl, new_socket)) /** set connection socket to SSL state **/
-				{
-					ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, &__detail__::_err_);
-					return true;
-				}
+				LOG << DEBUG_COLOR << "+====== new connection ======/’" << color::reset << "\n"
+					<< DEBUG_COLOR << "| socket = " << color::reset << new_socket << DEBUG_COLOR << ";" << color::reset << "\n"
+					<< DEBUG_COLOR << "| address = " << color::blue_bg << color::black << ::inet_ntoa(address.sin_addr) << DEBUG_COLOR << ";"
+					<< color::reset << "\n"
+					<< DEBUG_COLOR << "| port = " << color::reset << ::ntohs(address.sin_port) << DEBUG_COLOR << ";" << color::reset << "\n\n"
+					<< DEBUG_COLOR << "+============================\\," << ENDENTLN;
 				
-				if (ssl)
+				SSL* ssl = nullptr;
+				
+				if (ctx)
 				{
-					if (SSL_accept(ssl) <= 0)
+					ssl = SSL_new(ctx); /** raw new SSL state with context **/
+					if (!ssl)
 					{
-						ERROR("SSL_accept() failed. this = " << this);
-						ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, &__detail__::_err_);
-						ssl = nullptr;
+						ERROR("SSL_new() returned " << color::italic << color::purple << "nullptr" << color::reset
+													<< color::red << ". socket : " << socket << ". this = " << this);
 						return true;
 					}
+					
+					if (!SSL_set_fd(ssl, new_socket)) /** set connection socket to SSL state **/
+					{
+						ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, &__detail__::_err_);
+						return true;
+					}
+					
+					if (ssl)
+					{
+						if (SSL_accept(ssl) <= 0)
+						{
+							ERROR("SSL_accept() failed. socket : " << socket << ". this = " << this);
+							ERR_print_errors_cb(DEFAULT_ERROR_HANDLER, &__detail__::_err_);
+							ssl = nullptr;
+							return true;
+						}
+					}
+					
+					__detail__::print_cert_info(ssl);
 				}
 				
-				__detail__::print_cert_info(ssl);
+				auto* dat = new server_client_data{ };
+				dat->socket = new_socket;
+				dat->ssl = ssl;
+				dat->serv = const_cast<server*>(this);
+				dat->address = inet_address(address);
+				dat->is_client_processing_ptr = &is_client_processing;
+				dat->thread_id = ++thread_id;
+				::pthread_mutex_lock(&clients_counter_mutex);
+				dat->threads_count = &++threads_count;
+				::pthread_mutex_unlock(&clients_counter_mutex);
+				dat->process_function = process_function;
+				
+				LOG << DEBUG_COLOR << "running client processing thread..." << ENDENTLN;
+				
+				pthread_t pthread;
+				::pthread_create(&pthread, nullptr, process_client, (void*)dat);
+				::pthread_detach(pthread);
+				
+				LOG << DEBUG_COLOR << "done." << ENDENTLN;
 			}
-			
-			auto* dat = new server_client_data{ };
-			dat->socket = new_socket;
-			dat->ssl = ssl;
-			dat->serv = const_cast<server*>(this);
-			dat->address = inet_address(address);
-			dat->is_client_processing_ptr = &is_client_processing;
-			dat->thread_id = ++thread_id;
-			::pthread_mutex_lock(&clients_counter_mutex);
-			dat->threads_count = &++threads_count;
-			::pthread_mutex_unlock(&clients_counter_mutex);
-			dat->process_function = process_function;
-			
-			LOG << DEBUG_COLOR << "running client processing thread..." << ENDENTLN;
-			
-			pthread_t pthread;
-			::pthread_create(&pthread, nullptr, process_client, (void*)dat);
-			::pthread_detach(pthread);
-			
-			LOG << DEBUG_COLOR << "done." << ENDENTLN;
+			else ::usleep(10000);
 		}
 		
 		while (wait && threads_count > 0)
@@ -924,7 +957,13 @@ namespace inet
 			::usleep(10000);
 		}
 		
-		return true;
+		return !::fcntl(socket, F_GETFD);
+	}
+	
+	void server::set_timeo(int delay)
+	{
+		timeo = delay;
+		set_sockopts();
 	}
 	
 	inline void* server::server_thread(void* args)
@@ -994,6 +1033,7 @@ namespace inet
 		LOG << DEBUG_COLOR << "destruction of server(); this = " << this << ENDENTLN;
 		pthread_kill(this->main_thread, 0);
 		::close(this->socket);
+		this->socket = -1;
 		SSL_CTX_free(this->ctx);
 	}
 
@@ -1054,8 +1094,7 @@ namespace inet
 
 // #definition-begin client
 	
-	inline client::client(
-			const inet_address& server_address, loader&& crt = { })
+	inline client::client(int timeo, const inet_address& server_address, loader&& crt = { })
 			: server_address(server_address)
 	{
 		LOG << DEBUG_COLOR << "socket init..." << color::reset << "\n"
@@ -1085,12 +1124,52 @@ namespace inet
 			}
 		}
 		
+		fd_set set{ };
+		FD_ZERO(&set);
+		FD_SET(socket, &set);
+		
+		struct timeval timeout{timeo / 1000, (timeo % 1000) * 1000};
+		
+		int opt;
+		if ((opt = ::fcntl(socket, F_GETFL, nullptr)) < 0)
+		{
+			ERROR("fcntl() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno));
+			opt = 0;
+		}
+		
+		if (::fcntl(socket, F_SETFL, opt | O_NONBLOCK) < 0)
+		{
+			ERROR("fcntl() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno));
+			throw std::runtime_error("fcntl() failed");
+		}
+		
 		LOG << DEBUG_COLOR << "connecting..." << ENDENTLN;
 		
 		if (::connect(socket, (struct sockaddr*)&server_address, sizeof(server_address)) < 0)
 		{
-			ERROR("connect() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno));
-			throw std::runtime_error("connect() failed");
+			if (errno != EINPROGRESS)
+			{
+				ERROR("connect() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno));
+				throw std::runtime_error("connect() failed");
+			}
+		}
+		
+		if (::select(socket + 1, nullptr, &set, nullptr, &timeout) <= 0)
+		{
+			ERROR("select() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno));
+			throw std::runtime_error("select() failed");
+		}
+		
+		if ((opt = ::fcntl(socket, F_GETFL, nullptr)) < 0)
+		{
+			ERROR("fcntl() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno));
+			opt = 0;
+		}
+		
+		if (::fcntl(socket, F_SETFL, opt & ~O_NONBLOCK) < 0)
+		{
+			ERROR("fcntl() failed " << ::strerrorname_np(errno) << " " << color::bold << ::strerrordesc_np(errno));
+			throw std::runtime_error("fcntl() failed");
 		}
 		
 		if (ctx)
